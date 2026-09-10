@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+
+# Operator-supplied material — deliberately NOT distributed.
+# Each group provides its own; see configs/README.md.
+configs/*.ini
+configs/*.conf
+configs/*.csv
+configs/*.zcp
+configs/*.txt
+configs/areas/*.json
+# ...but the sample area IS tracked, as a starting point
+!configs/areas/example-area.json
+
+# Reference library and cached packages are large and license-varied
+docs/*.pdf
+scripts/Packages/*.deb
+scripts/Packages/**/*.jpg
+scripts/Packages/**/*.png
+
+# Runtime noise
+*.log
+*.part

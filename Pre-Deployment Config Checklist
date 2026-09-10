@@ -1,0 +1,111 @@
+# EMCOMM Field Node — Pre-Deployment Checklist
+
+Items that cannot be verified by the provisioner and must be confirmed against
+real hardware and your group's plan before a node is considered deployable.
+
+## 1. Callsign and Licence
+The callsign entered at provisioning is written into the JS8Call profile as MyCall
+and into the Direwolf config as MYCALL.
+
+Confirm:
+    - the callsign is real, current, and belongs to the operator of THIS node
+    - the operator holds the class of licence required for the modes enabled
+    - no node ships with a placeholder still in place
+
+Verify with:
+    grep -i mycall ~/.config/JS8Call.ini ~/.config/direwolf/direwolf.conf
+
+## 2. Profile Contamination (configs/*.ini, configs/*.conf)
+A profile captured from a working install carries that machine's identity.
+Before distributing any profile, check for:
+    - a real callsign         (MyCall / MYCALL)
+    - a grid square           (MyGrid)
+    - absolute home paths     (/home/<someone>/...)
+    - hardcoded audio devices (a specific card or PCI path)
+
+Verify with:
+    grep -nE "MyCall|MyGrid|/home/|alsa_|plughw|pci-" configs/*.ini configs/*.conf
+
+Replace identity with MYCALL_PLACEHOLDER, paths with HOME_PLACEHOLDER, and leave
+grid and audio device fields EMPTY for the operator to set per node.
+
+## 3. Audio Interface (JS8Call, Direwolf)
+Sound-card interface device names differ per machine and per adapter, and USB
+audio enumeration order is not stable across reboots.
+
+Verify with the interface connected:
+    arecord -l
+    pactl list short sinks
+    pactl list short sources
+
+Set the result in JS8Call -> File -> Settings -> Audio, and in ADEVICE in
+direwolf.conf. Consider a udev rule to pin a stable name if the index moves.
+
+## 4. PTT Keying (Direwolf)
+The shipped Direwolf config uses PTT CM108, which is common for USB sound-card
+interfaces but has documented reliability issues on Linux.
+
+Confirm PTT actually keys the radio, into a dummy load, before relying on it.
+If CM108 fails, a serial RTS/DTR PTT interface is the usual fallback.
+
+## 5. Operating Area Map Tiles (scripts/fetch_map_tiles.py)
+The tile fetcher needs a bounding box for YOUR operating area. Do not ship one
+group's area to another group, and do not commit an area you would rather not
+publish.
+
+Confirm:
+    - the bounding box covers your actual response area
+    - the zoom range is deep enough to be useful but small enough to fit on disk
+    - tiles land under ~/EMCOMM_Data/Offline_Maps/Offline_Tiles/
+
+## 6. Time Sync Behaviour
+Digital modes are timing-sensitive; JS8Call in particular needs the clock close
+to correct. The dock-trigger autostart waits up to 15s for chrony to report a
+normal leap status, then continues regardless.
+
+Verify actual cold-start sync time:
+    chronyc tracking
+Adjust the wait ceiling if your GPS takes longer to acquire.
+
+## 7. Radio Interface Enumeration Timing
+Autostart waits up to 10s for /dev/ttyUSB* or /dev/ttyACM* before launching the
+digital-mode applications. Confirm your interface enumerates within that window
+after a cold boot, or raise the ceiling.
+
+## 8. Dock Trigger (optional — skip if you have no dock)
+The udev rule ships with a PLACEHOLDER vendor/product ID. It will not match your
+hardware as-is.
+
+Find yours:
+    udevadm monitor --environment --udev
+(then dock/undock and read the actual idVendor/idProduct)
+
+Update 99-dock-trigger.rules, or leave this step unchecked entirely.
+
+## 9. Meshtastic Net Parameters
+Region, preset and channel must match across every node in the group or they
+will not hear each other. See the staged reference at
+~/EMCOMM_Data/Meshtastic/meshtastic_setup.md.
+
+Confirm the group has agreed region, preset and channel name before deployment,
+and decide per node whether position reporting should be on.
+
+## 10. Offline Knowledgebase Currency
+The Kiwix ZIM download is pinned to a specific dated file and checksum. That URL
+will eventually 404 as upstream rotates snapshots.
+
+If the download or checksum fails, pick a current file from
+https://download.kiwix.org/zim/ and update the URL and SHA-256 in the script.
+
+## 11. Unattended Updates
+If the "appliance build" step was run, unattended updates are disabled. That is
+correct for an imaged node kept offline, and wrong for a laptop in daily use.
+
+Either way: patch the node manually before each deployment cycle.
+
+## 12. Full Dry Run
+Before the node counts as ready, exercise it end to end:
+    - transmit and receive on each enabled mode, into a dummy load or on a net
+    - confirm maps render offline with the network cable pulled
+    - confirm the document server answers at http://127.0.0.1:8085
+    - run the machine on battery for the duration of an expected shift
