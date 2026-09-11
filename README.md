@@ -10,10 +10,37 @@ built once while online, then operates entirely offline.
 
 ---
 
+## Supported Hardware
+
+**This package targets a Panasonic Toughbook CF-30 docked in a Havis DS-PAN-111
+series dock.** That is the reference build, and it is the only combination the
+dock-trigger automation is known to work on.
+
+Two parts are tied to that hardware:
+
+* **The dock-trigger udev rule** matches the DS-PAN-111 dock's USB hub by vendor
+  and product ID (`05e3:0610`). A different dock enumerates differently, the rule
+  never fires, and nothing autostarts on dock.
+* **The autostart sequence** assumes the CF-30's peripheral layout — its serial
+  and USB topology, and the display coming up on `:0` under XFCE.
+
+**On other laptops and other docks, treat the dock-trigger step as unsupported.**
+Leave it unchecked. Everything else — packages, profiles, mapping, the document
+server, Direwolf, Meshtastic, SatDump — is vanilla Linux configuration and
+provisions normally on any x86_64 machine running the supported OS. You lose
+dock-triggered autostart, not the node.
+
+To adapt the rule to your own dock, find its IDs with
+`udevadm monitor --environment --udev` while docking, and edit the `idVendor` /
+`idProduct` values in `99-dock-trigger.rules`. That is a port, not a
+configuration option, and it is on you to verify.
+
+---
+
 ## Target Platform
 
-Hardware-agnostic vanilla Linux configuration — runs on any x86_64 system meeting
-the requirements below.
+Apart from the dock automation above, this is vanilla Linux configuration and runs
+on any x86_64 system meeting the requirements below.
 
 * **OS:** Linux Mint 22.x, XFCE edition (Ubuntu 24.04 / "noble" base)
 * **Typical hardware:** any serviceable laptop; rugged/ex-fleet machines (Panasonic
@@ -22,13 +49,13 @@ the requirements below.
 * **Interfaces:** USB / serial to radio hardware (sound-card interface, GPS puck,
   RTL-SDR, LoRa node)
 
-Two components are environment-specific rather than hardware-specific:
+One further component is environment-specific:
 
-* The dock-trigger udev rule is keyed to a **placeholder** USB vendor/product ID.
-  If you use it, find your own dock's IDs with `udevadm monitor --environment --udev`
-  and update `99-dock-trigger.rules`. Skip the step entirely if you have no dock.
 * Desktop-shortcut trust uses XFCE mechanisms (`xfconf`,
-  `metadata::xfce-exe-checksum`). Another desktop environment needs different handling.
+  `metadata::xfce-exe-checksum`). Another desktop environment needs different
+  handling.
+
+The dock-trigger rule is hardware-specific — see **Supported Hardware** above.
 
 ---
 
@@ -50,6 +77,18 @@ Installed and configured by the provisioner:
   shortcuts
 
 Every one of these is an independently checkable step. Nothing is mandatory.
+
+The provisioner runs as five screens — **options, administrator access, run,
+verification, summary**. Sudo is collected after the steps are chosen, not as a
+checkbox: provisioning writes to `/etc`, installs packages, enables systemd units
+and adds a udev rule, so root is a requirement of the run. When the run ends a
+read-only verification pass checks what actually landed on disk — not merely that
+profiles were staged, but that placeholders were substituted and the map sources
+point at the layers the fetcher wrote. It reports; it never repairs.
+
+The callsign / node ID also becomes the machine's **system hostname**, with the
+matching `/etc/hosts` entry, so a fleet built by cloning one master image does not
+end up with every node answering to the same name.
 
 ---
 

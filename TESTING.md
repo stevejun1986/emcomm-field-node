@@ -80,7 +80,8 @@ machine, since several failures only appear on a second run.
 ## Dry run (no VM required)
 
 ```bash
-python3 tests/dryrun.py .
+python3 tests/dryrun.py .          # every step, nothing installed
+xvfb-run -a python3 tests/flow.py  # the five screens and verification wiring
 ```
 
 Runs the real step functions with `subprocess`, downloads and `shutil.which`
@@ -96,3 +97,8 @@ real machine until someone needs the radio.
 
 It does not cover runtime behaviour — real downloads, real archive extraction,
 real `apt`. A VM run is still required before any deployment.
+
+`tests/flow.py` additionally asserts that **every screen fits a 1024x768 panel** —
+the reference CF-30's display. `pack()` clips silently rather than scrolling, so a
+screen that outgrows the display hides its own controls with no error at all. That
+has happened before; the assertion is there so it cannot happen quietly again.

@@ -88,6 +88,7 @@ KNOWN LIMITATIONS
 
 from __future__ import annotations
 
+import getpass
 import hashlib
 import json
 import os
@@ -167,6 +168,50 @@ except ImportError:
 # a callback instead of print(), and every "sudo" call routes through the
 # askpass session so it works with no controlling terminal).
 # ===========================================================================
+
+def _current_user() -> str:
+    """The invoking user's login name.
+
+    os.getlogin() reads the controlling terminal, which a GUI launched from a
+    desktop session may not have — it raises OSError there, which would kill
+    the run at Ctx construction before any step began.
+    """
+    return os.environ.get("USER") or getpass.getuser()
+
+
+def hostname_from_node_id(node_id: str) -> str:
+    """An RFC 1123 hostname label derived from a callsign / node ID.
+
+    Node IDs are free text; a hostname may hold only letters, digits and
+    hyphens, may not begin or end with one, and stops at 63 characters.
+    Returns "" when nothing usable survives, in which case the caller must
+    leave the system name alone rather than guess at one.
+    """
+    h = re.sub(r"[^A-Za-z0-9-]", "-", node_id)
+    h = re.sub(r"-{2,}", "-", h).strip("-")
+    return h[:63].strip("-")
+
+
+def rewrite_hosts(lines: list, hostname: str) -> list:
+    """/etc/hosts with its 127.0.1.1 entry pointed at `hostname`.
+
+    Pure and idempotent: every other line survives byte for byte, duplicate
+    127.0.1.1 entries collapse to one, and a file without such an entry gets
+    one directly after the loopback line, which is where Debian puts it.
+    """
+    out, replaced = [], False
+    for line in lines:
+        if line.split()[:1] == ["127.0.1.1"]:
+            if not replaced:
+                out.append("127.0.1.1\t" + hostname)
+                replaced = True
+            continue
+        out.append(line)
+    if not replaced:
+        idx = next((i for i, l in enumerate(out) if l.split()[:1] == ["127.0.0.1"]), -1)
+        out.insert(idx + 1, "127.0.1.1\t" + hostname)
+    return out
+
 
 class ProvisioningCancelled(Exception):
     """Raised between steps when the user hits Cancel."""
@@ -540,6 +585,44 @@ def step_sudoers_and_node_id(ctx: Ctx):
     ctx.log(f"[+] Configuring Node ID: {ctx.node_id}", "ok")
     ctx.sudo("mkdir", "-p", SYSTEM_DIR)
     ctx.sudo_write(NODE_CONF, f"NODE_ID={ctx.node_id}\n")
+
+    _set_system_hostname(ctx)
+
+
+def _set_system_hostname(ctx: Ctx):
+    """Make the callsign / node ID the machine's name on the network.
+
+    Two writes, and both are required. hostnamectl alone leaves /etc/hosts
+    pointing 127.0.1.1 at the OLD name, and every later sudo call then stalls
+    on "unable to resolve host" — so the loopback entry moves with it.
+
+    This matters most for a fleet: nodes are built by imaging one master and
+    cloning it, and without this every unit answers to the master's name.
+    """
+    hostname = hostname_from_node_id(ctx.node_id)
+    if not hostname:
+        ctx.log(f"[!] {ctx.node_id!r} has no characters valid in a hostname — "
+                f"system name left unchanged.", "warn")
+        return
+    if hostname != ctx.node_id:
+        ctx.log(f"[!] {ctx.node_id!r} is not a valid hostname; using {hostname!r} "
+                f"as the system name.", "warn")
+
+    # One-time backup, so a bad /etc/hosts is recoverable without a live USB.
+    if not Path("/etc/hosts.%s.bak" % PROJECT).exists():
+        ctx.sudo("cp", "/etc/hosts", "/etc/hosts.%s.bak" % PROJECT)
+
+    ctx.sudo("hostnamectl", "set-hostname", hostname)
+
+    try:
+        existing = Path("/etc/hosts").read_text(errors="replace").splitlines()
+    except OSError as e:
+        ctx.log(f"[!] Could not read /etc/hosts ({e}) — 127.0.1.1 not updated. "
+                f"sudo may stall on 'unable to resolve host'.", "err")
+        return
+    ctx.sudo_write("/etc/hosts", "\n".join(rewrite_hosts(existing, hostname)) + "\n")
+    ctx.log(f"[+] System hostname set to {hostname} "
+            f"(open terminals keep the old prompt until relaunched).", "ok")
 
 
 def step_system_packages(ctx: Ctx):
@@ -1181,20 +1264,314 @@ class Component:
 # all unchecked by default — check only what you're testing. "Select All"
 # reproduces a full, real run equivalent to deploy_emcomm_node.sh end to end.
 COMPONENTS: list[Component] = [
-    Component("sudoers_node_id", f"Sudo config + write callsign / node ID ({SYSTEM_DIR})", step_sudoers_and_node_id),
-    Component("system_packages", "System packages (apt purge/update/upgrade + core list, Wine init) — SLOW", step_system_packages),
-    Component("slim_appliance", "Remove preinstalled extras + disable auto-updates (appliance build)", optional_slim_appliance),
-    Component("qlog_ion2g", "QLog station log + ion2G HF ALE (download & extract)", step_qlog_ion2g),
-    Component("maps_fetch", "Offline map tile fetch (your operating area)", step_maps_fetch),
-    Component("kiwix_zim", "Offline knowledgebase (Kiwix ZIM) download + registration", step_kiwix_zim),
-    Component("docs_server", "Reference library sync + local document server", step_docs_server),
-    Component("config_profiles", "App profiles (JS8Call / QMapShack / CHIRP) + ALE channel plan", step_config_profiles),
-    Component("dock_trigger", "Dock-trigger autostart (systemd/udev) — optional hardware", step_dock_trigger),
+    Component("sudoers_node_id", "Callsign / node ID + system hostname", step_sudoers_and_node_id),
+    Component("system_packages", "System packages + Wine init — SLOWEST", step_system_packages),
+    Component("slim_appliance", "Slim appliance build (remove extras)", optional_slim_appliance),
+    Component("qlog_ion2g", "QLog station log + ion2G HF ALE", step_qlog_ion2g),
+    Component("maps_fetch", "Offline map tiles (your operating area)", step_maps_fetch),
+    Component("kiwix_zim", "Offline knowledgebase (Kiwix ZIM)", step_kiwix_zim),
+    Component("docs_server", "Reference library + document server", step_docs_server),
+    Component("config_profiles", "App profiles + ALE channel plan", step_config_profiles),
+    Component("dock_trigger", "Dock-trigger autostart (Havis dock only)", step_dock_trigger),
     Component("direwolf", "Direwolf (AX.25 / APRS software TNC)", optional_direwolf),
     Component("meshtastic", "Meshtastic CLI (LoRa mesh node tooling)", optional_meshtastic),
-    Component("satdump", "SatDump (weather satellite imagery via RTL-SDR) — SLOW", optional_satdump),
+    Component("satdump", "SatDump (weather imagery, RTL-SDR) — SLOW", optional_satdump),
     Component("desktop_shortcuts", "Desktop shortcuts", finalize),
 ]
+
+
+# ===========================================================================
+# Post-deployment verification
+#
+# Runs after the component loop, including after a failure or a cancel — what
+# did land before the stop is the useful part. Every check is gated on the
+# step that would have produced it, so an unselected step is never reported as
+# a failure. The checks are read-only: they report, they never repair.
+# ===========================================================================
+
+@dataclass(frozen=True)
+class CheckResult:
+    label: str
+    status: str          # "pass" | "warn" | "fail"
+    detail: str = ""
+
+
+# (display name, apt package, executables it may install)
+#
+# A mapping rather than a flat list because a package's name is not a promise
+# about its executable: apt's "chirp" installs /usr/bin/chirpw.
+CORE_APPS: tuple = (
+    ("JS8Call",   "js8call",   ("js8call",)),
+    ("QMapShack", "qmapshack", ("qmapshack",)),
+    ("CHIRP",     "chirp",     ("chirpw", "chirp")),
+    ("chrony",    "chrony",    ("chronyc",)),
+    ("Wine",      "wine",      ("wine",)),
+)
+
+
+def _package_installed(pkg: str) -> bool:
+    """True only if dpkg reports the package fully installed. A package removed
+    but not purged reports "deinstall ok config-files", which is not it."""
+    try:
+        out = subprocess.run(["dpkg-query", "-W", "-f=${Status}", pkg],
+                             stdin=subprocess.DEVNULL, capture_output=True, text=True)
+    except OSError:
+        return False
+    return out.returncode == 0 and out.stdout.split()[-1:] == ["installed"]
+
+
+def _root_exists(ctx: Ctx, path: Path) -> bool:
+    """Presence check for a path a normal user cannot stat. /etc/sudoers.d is
+    mode 0750, so Path.exists() there answers False whether or not the file is
+    present — a check that could only ever report a false failure."""
+    if getattr(ctx, "askpass", None) is None:
+        return path.exists()
+    try:
+        return subprocess.run(["sudo", "-A", "test", "-e", str(path)],
+                              env=ctx.askpass.env(), stdin=subprocess.DEVNULL,
+                              stdout=subprocess.DEVNULL,
+                              stderr=subprocess.DEVNULL).returncode == 0
+    except OSError:
+        return path.exists()
+
+
+def _placeholder_count(path: Path) -> int:
+    """Unsubstituted tokens left in a staged profile. A surviving token is worse
+    than a missing setting: it is used verbatim as a real value."""
+    try:
+        return path.read_text(errors="replace").count("PLACEHOLDER")
+    except OSError:
+        return 0
+
+
+def _ini_value(path: Path, key: str) -> Optional[str]:
+    """First `key=value` in a flat INI-style file, or None."""
+    try:
+        for line in path.read_text(errors="replace").splitlines():
+            if line.startswith(key + "="):
+                return line.split("=", 1)[1].strip()
+    except OSError:
+        pass
+    return None
+
+
+def verify_deployment(ctx: Ctx, selected_ids: set) -> list:
+    out: list = []
+
+    def add(label: str, status: str, detail: str = "") -> None:
+        out.append(CheckResult(label, status, detail))
+
+    def want(path: Path, label: str, *, hard: bool = True) -> bool:
+        if path.exists():
+            add(label, "pass", str(path))
+            return True
+        add(label, "fail" if hard else "warn", "missing: " + str(path))
+        return False
+
+    home = ctx.home
+
+    # --- identity -------------------------------------------------------
+    if "sudoers_node_id" in selected_ids:
+        node_conf = Path(NODE_CONF)
+        if want(node_conf, "Node ID file written"):
+            recorded = _ini_value(node_conf, "NODE_ID")
+            if recorded == ctx.node_id:
+                add("Node ID matches this run", "pass", "NODE_ID=" + str(recorded))
+            else:
+                add("Node ID matches this run", "fail",
+                    "file says %r, expected %r" % (recorded, ctx.node_id))
+
+        want_host = hostname_from_node_id(ctx.node_id)
+        if want_host:
+            actual = subprocess.run(["hostname"], stdin=subprocess.DEVNULL,
+                                    capture_output=True, text=True).stdout.strip()
+            if actual.lower() == want_host.lower():
+                add("System hostname is the Node ID", "pass", "hostname = " + actual)
+            else:
+                add("System hostname is the Node ID", "fail",
+                    "hostname is %r, expected %r" % (actual, want_host))
+            try:
+                mapped = any(l.split()[:2] == ["127.0.1.1", want_host]
+                             for l in Path("/etc/hosts").read_text(errors="replace").splitlines())
+            except OSError:
+                mapped = False
+            add("Loopback name resolution updated", "pass" if mapped else "fail",
+                "127.0.1.1 -> " + want_host if mapped
+                else "/etc/hosts has no 127.0.1.1 entry for " + want_host
+                     + " — sudo will stall on 'unable to resolve host'")
+
+        sudoers = Path(SUDOERS_FILE)
+        if _root_exists(ctx, sudoers):
+            add("Passwordless sudo rule for RF daemons", "pass", str(sudoers))
+        else:
+            add("Passwordless sudo rule for RF daemons", "fail", "missing: " + str(sudoers))
+
+    # --- base packages --------------------------------------------------
+    if "system_packages" in selected_ids:
+        for label, pkg, binaries in CORE_APPS:
+            found = None
+            for candidate in binaries:
+                found = shutil.which(candidate)
+                if found:
+                    break
+            if found:
+                add(label + " installed", "pass", found)
+            elif _package_installed(pkg):
+                add(label + " installed", "warn",
+                    "package %s is installed, but no %s on PATH" % (pkg, " or ".join(binaries)))
+            else:
+                add(label + " installed", "fail",
+                    "no %s on PATH and package %s is not installed" % (" or ".join(binaries), pkg))
+
+    # --- QLog / ion2G ---------------------------------------------------
+    if "qlog_ion2g" in selected_ids:
+        exe_ptr = home / STATE_DIR_NAME / "ion2g_exe_path"
+        if want(exe_ptr, "ion2G executable path recorded"):
+            target = Path(exe_ptr.read_text(errors="replace").strip())
+            if target.is_file():
+                add("ion2G executable present", "pass", str(target))
+            else:
+                add("ion2G executable present", "fail",
+                    "recorded path does not exist: " + str(target))
+
+    # --- offline maps ---------------------------------------------------
+    if "maps_fetch" in selected_ids:
+        tiles = ctx.data_dir / "Offline_Maps" / "Offline_Tiles"
+        for layer, _tms, title in MAP_LAYERS:
+            d = tiles / layer
+            n = sum(1 for _ in d.rglob("*.png")) if d.is_dir() else 0
+            add("Map tiles: " + title, "pass" if n else "warn",
+                "%d tile(s) in %s" % (n, d) if n
+                else "no tiles in " + str(d) + " — define an operating area and re-run")
+
+    # --- offline knowledgebase ------------------------------------------
+    if "kiwix_zim" in selected_ids:
+        zim_dir = ctx.data_dir / "Kiwix_ZIM"
+        zims = sorted(zim_dir.glob("*.zim")) if zim_dir.is_dir() else []
+        if zims:
+            add("Kiwix ZIM present", "pass", ", ".join(z.name for z in zims))
+        else:
+            add("Kiwix ZIM present", "fail", "no .zim in " + str(zim_dir))
+        want(home / ".local" / "share" / "kiwix" / "library.xml",
+             "Kiwix library registered", hard=False)
+
+    # --- reference library + doc server ---------------------------------
+    if "docs_server" in selected_ids:
+        pdfs = ctx.data_dir / "PDF_Manuals"
+        n = len(list(pdfs.glob("*.pdf"))) if pdfs.is_dir() else 0
+        add("Reference PDFs staged", "pass" if n else "warn",
+            ("%d PDF(s) in %s" % (n, pdfs)) if n
+            else "no PDFs in " + str(pdfs) + " — the library will serve empty")
+        want(home / ".config" / "systemd" / "user" / DOCS_SERVER_UNIT,
+             "Document server unit installed")
+        active = subprocess.run(["systemctl", "--user", "is-active", DOCS_SERVER_UNIT],
+                                stdin=subprocess.DEVNULL, capture_output=True,
+                                text=True).stdout.strip()
+        add("Document server running", "pass" if active == "active" else "warn",
+            "systemctl --user is-active -> " + (active or "unknown"))
+
+    # --- application profiles (the ones that bite) ----------------------
+    if "config_profiles" in selected_ids:
+        js8 = home / ".config" / "JS8Call.ini"
+        if want(js8, "JS8Call profile staged"):
+            call = _ini_value(js8, "MyCall")
+            if call == ctx.node_id:
+                add("JS8Call MyCall set to this node", "pass", "MyCall=" + str(call))
+            else:
+                add("JS8Call MyCall set to this node", "fail",
+                    "MyCall=%r, expected %r" % (call, ctx.node_id))
+            left = _placeholder_count(js8)
+            add("JS8Call placeholders substituted", "pass" if left == 0 else "fail",
+                "clean" if left == 0 else "%d unsubstituted token(s) remain" % left)
+            grid = _ini_value(js8, "MyGrid")
+            add("JS8Call grid square", "pass" if not grid else "warn",
+                "empty — set per operator" if not grid
+                else "MyGrid=" + grid + " (set by profile, confirm correct)")
+
+        qms = home / ".config" / "QLandkarteGT" / "QMapShack.conf"
+        if want(qms, "QMapShack profile staged"):
+            left = _placeholder_count(qms)
+            add("QMapShack placeholders substituted", "pass" if left == 0 else "fail",
+                "clean" if left == 0 else "%d unsubstituted token(s) remain" % left)
+
+        want(home / ".local" / "share" / "CHIRP" / "analog_channels.csv",
+             "CHIRP channel list staged", hard=False)
+        want(ctx.data_dir / "ion2G" / "ale_channels.zcp",
+             "ALE channel plan staged", hard=False)
+
+        # The .tms files and the tile directories must agree — they did not
+        # once, and QMapShack then opened the sources onto nothing.
+        for layer, tms_name, title in MAP_LAYERS:
+            tms = ctx.data_dir / "Offline_Maps" / tms_name
+            if want(tms, "Map source " + tms_name, hard=False):
+                expect = "Offline_Tiles/" + layer + "/"
+                add("Map source " + tms_name + " points at the fetched layer",
+                    "pass" if expect in tms.read_text(errors="replace") else "fail",
+                    expect if expect in tms.read_text(errors="replace")
+                    else "does not reference " + expect)
+
+    # --- dock trigger ---------------------------------------------------
+    if "dock_trigger" in selected_ids:
+        launcher = home / ".local" / "bin" / AUTOSTART_SCRIPT
+        if want(launcher, "Autostart launcher installed"):
+            add("Autostart launcher executable",
+                "pass" if os.access(launcher, os.X_OK) else "fail",
+                "mode %o" % (launcher.stat().st_mode & 0o777))
+        want(home / ".config" / "systemd" / "user" / AUTOSTART_UNIT,
+             "Autostart user unit installed")
+        want(Path(DOCK_EVENT_SH), "Dock-event dispatcher installed")
+        want(Path("/etc/udev/rules.d/99-dock-trigger.rules"), "udev dock rule installed")
+
+    # --- optional installs ----------------------------------------------
+    if "direwolf" in selected_ids:
+        dw = shutil.which("direwolf")
+        add("Direwolf installed", "pass" if dw else "fail",
+            dw or "direwolf not on PATH")
+        conf = home / ".config" / "direwolf" / "direwolf.conf"
+        if want(conf, "Direwolf config written"):
+            mycall = None
+            for line in conf.read_text(errors="replace").splitlines():
+                if line.startswith("MYCALL "):
+                    mycall = line.split(None, 1)[1].strip()
+                    break
+            if mycall == ctx.node_id:
+                add("Direwolf MYCALL set to this node", "pass", "MYCALL=" + str(mycall))
+            else:
+                add("Direwolf MYCALL set to this node", "fail",
+                    "MYCALL=%r, expected %r" % (mycall, ctx.node_id))
+        want(home / "direwolf.conf", "Direwolf config discoverable from $HOME", hard=False)
+
+    if "meshtastic" in selected_ids:
+        want(home / ".local" / "bin" / "meshtastic", "Meshtastic wrapper on PATH")
+        want(home / APPS_DIR_NAME / "meshtastic-venv" / "bin" / "meshtastic",
+             "Meshtastic CLI installed in venv")
+        groups = subprocess.run(["id", "-nG", ctx.user], stdin=subprocess.DEVNULL,
+                                capture_output=True, text=True).stdout.split()
+        add("Operator in 'dialout' group", "pass" if "dialout" in groups else "warn",
+            "present" if "dialout" in groups
+            else "added, but requires log out / log in to take effect")
+        want(ctx.data_dir / "Meshtastic" / "meshtastic_setup.md",
+             "Mesh setup reference staged", hard=False)
+
+    if "satdump" in selected_ids:
+        built = home / APPS_DIR_NAME / "SatDump" / "build" / "satdump"
+        if shutil.which("satdump") or built.is_file():
+            add("SatDump available", "pass", shutil.which("satdump") or str(built))
+        else:
+            add("SatDump available", "fail", "no satdump binary found (package or build)")
+        want(home / ".config" / "satdump" / "satdump_tles.txt",
+             "SatDump TLE set staged", hard=False)
+
+    # --- desktop -------------------------------------------------------
+    if "desktop_shortcuts" in selected_ids:
+        desktop = home / "Desktop"
+        n = len(list(desktop.glob("*.desktop"))) if desktop.is_dir() else 0
+        add("Desktop shortcuts created", "pass" if n else "warn",
+            "%d shortcut(s)" % n if n else "none found in " + str(desktop))
+
+    if not out:
+        add("Nothing to verify", "warn", "no steps were selected for this run")
+    return out
 
 
 # ===========================================================================
@@ -1215,7 +1592,9 @@ class ProvisionerGUI(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title(f"{OPERATOR_PREFIX} Field Node Provisioner")
-        self.geometry("820x700")
+        # The reference panel is a CF-30 at 1024x768, so every screen has to
+        # fit inside that with room for window decorations and a panel.
+        self.geometry("900x700")
         self.minsize(700, 560)
 
         self.msg_queue: "queue.Queue[tuple]" = queue.Queue()
@@ -1233,9 +1612,33 @@ class ProvisionerGUI(tk.Tk):
         self._spin_suffix: str = ""
         self._spin_pos = 0
 
+        # Screens are built once and shown/hidden, so going back to an earlier
+        # one preserves whatever was already entered.
+        self.frames: dict = {}
+        self.selected_ids: set = set()
+        self.check_results: list = []
+        self.run_outcome: str = "unknown"     # completed | failed | cancelled
+
         self._build_options_screen()
+        self._show("options")
         self.after(100, self._drain_queue)
         self.protocol("WM_DELETE_WINDOW", self._on_close)
+
+    def _show(self, name: str):
+        for frame in self.frames.values():
+            frame.pack_forget()
+        frame = self.frames[name]
+        frame.pack(fill="both", expand=True)
+        self._fit_minsize(frame)
+
+    def _fit_minsize(self, frame):
+        """Raise the window minimum so a screen can never be shrunk into
+        clipping. pack() truncates silently rather than scrolling, so a minsize
+        below a screen's requested size hides controls with no warning."""
+        frame.update_idletasks()
+        cur_w, cur_h = self.minsize()
+        self.minsize(max(cur_w, frame.winfo_reqwidth()),
+                     max(cur_h, frame.winfo_reqheight()))
 
     # -- spinner: animated "in progress" log line ------------------------
     def _spin_start(self, label: str):
@@ -1298,7 +1701,7 @@ class ProvisionerGUI(tk.Tk):
     # -- screen 1: options ----------------------------------------------
     def _build_options_screen(self):
         self.options_frame = ttk.Frame(self, padding=16)
-        self.options_frame.pack(fill="both", expand=True)
+        self.frames["options"] = self.options_frame
 
         ttk.Label(self.options_frame, text=f"{OPERATOR_PREFIX} Field Node Provisioner",
                   font=("TkDefaultFont", 14, "bold")).pack(anchor="w")
@@ -1315,9 +1718,33 @@ class ProvisionerGUI(tk.Tk):
         self.node_id_var = tk.StringVar()
         ttk.Entry(form, textvariable=self.node_id_var, width=30).grid(row=0, column=1, sticky="w", padx=8)
 
-        ttk.Label(form, text="Sudo password:").grid(row=1, column=0, sticky="w", pady=4)
-        self.sudo_pw_var = tk.StringVar()
-        ttk.Entry(form, textvariable=self.sudo_pw_var, show="*", width=30).grid(row=1, column=1, sticky="w", padx=8)
+        # Pack the bottom bar BEFORE the expanding step list: pack() hands out
+        # space in call order and clips whatever came last, which must never be
+        # the control that moves the run forward.
+        self.continue_btn = ttk.Button(self.options_frame, text="Continue \u2192",
+                                        command=self._on_continue_to_sudo)
+        self.continue_btn.pack(side="bottom", anchor="e", pady=(4, 0))
+
+        ttk.Label(self.options_frame,
+                  text=("Run from the folder containing this script, as your normal user "
+                        "(not root). Steps are independent and not dependency-checked, so "
+                        "a single step can be re-run on its own \u2014 but e.g. the ion2G step "
+                        "assumes wine and unzip are already installed."),
+                  wraplength=660, foreground="#666666",
+                  justify="left").pack(side="bottom", anchor="w", pady=(4, 8))
+
+        hw = ttk.LabelFrame(self.options_frame, text="Hardware compatibility")
+        hw.pack(side="bottom", fill="x", pady=(10, 4))
+        ttk.Label(hw,
+                  text=("This package targets a Panasonic Toughbook CF-30 in a Havis "
+                        "DS-PAN-111 series dock. The dock-trigger step is keyed to that "
+                        "dock's USB vendor/product ID, and the autostart sequence assumes "
+                        "that hardware. Other docks and laptops are NOT supported \u2014 "
+                        "the udev rule will not fire and the autostart sequence will not "
+                        "run. Everything else provisions normally; see the README before "
+                        "deploying on different hardware."),
+                  wraplength=660, foreground="#8a5a00",
+                  justify="left").pack(anchor="w", padx=8, pady=6)
 
         comp_frame = ttk.LabelFrame(self.options_frame, text="Steps to run (all unchecked by default)")
         comp_frame.pack(fill="both", expand=True, pady=(14, 8))
@@ -1340,18 +1767,6 @@ class ProvisionerGUI(tk.Tk):
         grid.columnconfigure(0, weight=1)
         grid.columnconfigure(1, weight=1)
 
-        ttk.Label(self.options_frame,
-                  text=("Run from the folder containing this script, as your normal user (not root). "
-                        "The sudo password above stays in memory only, feeds a "
-                        "private one-time askpass helper, and is wiped when the "
-                        "run ends. Steps are independent and not dependency-checked, so "
-                        "a single step can be re-run on its own — but e.g. the ion2G step "
-                        "assumes wine and unzip are already installed."),
-                  wraplength=760, foreground="#666666", justify="left").pack(anchor="w", pady=(4, 8))
-
-        self.start_btn = ttk.Button(self.options_frame, text="Start Provisioning",
-                                     command=self._on_start)
-        self.start_btn.pack(anchor="e", pady=(4, 0))
 
     def _select_all_components(self):
         for var in self.component_vars.values():
@@ -1361,12 +1776,114 @@ class ProvisionerGUI(tk.Tk):
         for var in self.component_vars.values():
             var.set(False)
 
-    # -- screen 2: run ----------------------------------------------------
-    def _build_run_screen(self):
-        self.options_frame.destroy()
+    # -- screen 2: sudo credentials ---------------------------------------
+    def _build_sudo_screen(self):
+        f = ttk.Frame(self, padding=16)
+        self.frames["sudo"] = f
 
+        ttk.Label(f, text="Administrator Access Required",
+                  font=("TkDefaultFont", 14, "bold")).pack(anchor="w")
+        ttk.Label(f,
+                  text=("Provisioning installs packages, writes to /etc, enables systemd "
+                        "units and adds a udev rule. All of that needs root, so this is a "
+                        "requirement of the run rather than something to opt into."),
+                  wraplength=660, foreground="#666666", justify="left").pack(anchor="w", pady=(0, 14))
+
+        self.sudo_summary = ttk.Label(f, text="", wraplength=660, justify="left")
+        self.sudo_summary.pack(anchor="w", pady=(0, 14))
+
+        form = ttk.Frame(f)
+        form.pack(fill="x")
+        ttk.Label(form, text="Sudo password:").grid(row=0, column=0, sticky="w", pady=4)
+        self.sudo_pw_var = tk.StringVar()
+        self.sudo_entry = ttk.Entry(form, textvariable=self.sudo_pw_var, show="*", width=32)
+        self.sudo_entry.grid(row=0, column=1, sticky="w", padx=8)
+        self.sudo_entry.bind("<Return>", lambda _e: self._on_start())
+
+        self.sudo_error = ttk.Label(f, text="", foreground="#c0392b", wraplength=660, justify="left")
+        self.sudo_error.pack(anchor="w", pady=(8, 0))
+
+        ttk.Label(f,
+                  text=("The password is held in memory only. It feeds a private, "
+                        "single-use askpass helper readable by no one else, deleted the "
+                        "moment the run ends \u2014 success, failure or cancel. It is never "
+                        "written to the repository, a log, or anywhere else, and never "
+                        "leaves this machine."),
+                  wraplength=660, foreground="#666666", justify="left").pack(anchor="w", pady=(14, 8))
+
+        btns = ttk.Frame(f)
+        btns.pack(fill="x", pady=(10, 0))
+        ttk.Button(btns, text="\u2190 Back", command=lambda: self._show("options")).pack(side="left")
+        self.start_btn = ttk.Button(btns, text="Start Provisioning", command=self._on_start)
+        self.start_btn.pack(side="right")
+
+    # -- screen 4: verification -------------------------------------------
+    def _build_verify_screen(self):
+        f = ttk.Frame(self, padding=16)
+        self.frames["verify"] = f
+
+        self.verify_title = ttk.Label(f, text="Verifying deployment\u2026",
+                                       font=("TkDefaultFont", 14, "bold"))
+        self.verify_title.pack(anchor="w")
+        ttk.Label(f,
+                  text=("Read-only checks against what actually landed on disk. Only steps "
+                        "you selected are checked, so a skipped step is never reported as a "
+                        "failure."),
+                  wraplength=660, foreground="#666666", justify="left").pack(anchor="w", pady=(0, 12))
+
+        table = ttk.Frame(f)
+        table.pack(fill="both", expand=True)
+        cols = ("status", "check", "detail")
+        self.verify_tree = ttk.Treeview(table, columns=cols, show="headings", height=16)
+        self.verify_tree.heading("status", text="")
+        self.verify_tree.heading("check", text="Check")
+        self.verify_tree.heading("detail", text="Detail")
+        self.verify_tree.column("status", width=34, anchor="center", stretch=False)
+        self.verify_tree.column("check", width=310, anchor="w")
+        self.verify_tree.column("detail", width=440, anchor="w")
+        self.verify_tree.tag_configure("pass", foreground="#2e7d32")
+        self.verify_tree.tag_configure("warn", foreground="#b8860b")
+        self.verify_tree.tag_configure("fail", foreground="#c0392b")
+        sb = ttk.Scrollbar(table, orient="vertical", command=self.verify_tree.yview)
+        self.verify_tree.configure(yscrollcommand=sb.set)
+        sb.pack(side="right", fill="y")
+        self.verify_tree.pack(side="left", fill="both", expand=True)
+
+        btns = ttk.Frame(f)
+        btns.pack(fill="x", pady=(10, 0))
+        ttk.Button(btns, text="\u2190 View log", command=lambda: self._show("run")).pack(side="left")
+        self.verify_continue_btn = ttk.Button(btns, text="Continue \u2192",
+                                               command=self._on_show_summary, state="disabled")
+        self.verify_continue_btn.pack(side="right")
+
+    # -- screen 5: summary -------------------------------------------------
+    def _build_summary_screen(self):
+        f = ttk.Frame(self, padding=16)
+        self.frames["summary"] = f
+
+        self.summary_title = ttk.Label(f, text="", font=("TkDefaultFont", 14, "bold"))
+        self.summary_title.pack(anchor="w", pady=(0, 12))
+
+        self.summary_body = tk.Text(f, height=16, wrap="word", relief="flat",
+                                     background=self.cget("background"), state="disabled")
+        self.summary_body.pack(fill="both", expand=True)
+        self.summary_body.tag_configure("ok", foreground="#2e7d32")
+        self.summary_body.tag_configure("warn", foreground="#b8860b")
+        self.summary_body.tag_configure("err", foreground="#c0392b")
+        self.summary_body.tag_configure("head", font=("TkDefaultFont", 10, "bold"))
+
+        btns = ttk.Frame(f)
+        btns.pack(fill="x", pady=(10, 0))
+        ttk.Button(btns, text="\u2190 Verification details",
+                   command=lambda: self._show("verify")).pack(side="left")
+        ttk.Button(btns, text="View log",
+                   command=lambda: self._show("run")).pack(side="left", padx=(8, 0))
+        ttk.Button(btns, text="Close", command=self._on_close).pack(side="right")
+
+    # -- screen 3: run ----------------------------------------------------
+    def _build_run_screen(self):
         self.run_frame = ttk.Frame(self, padding=16)
-        self.run_frame.pack(fill="both", expand=True)
+        self.frames["run"] = self.run_frame
 
         self.step_label = ttk.Label(self.run_frame, text="Starting…", font=("TkDefaultFont", 11, "bold"))
         self.step_label.pack(anchor="w")
@@ -1385,46 +1902,79 @@ class ProvisionerGUI(tk.Tk):
         btns.pack(fill="x", pady=(10, 0))
         self.cancel_btn = ttk.Button(btns, text="Cancel", command=self._on_cancel)
         self.cancel_btn.pack(side="left")
-        self.close_btn = ttk.Button(btns, text="Close", command=self.destroy, state="disabled")
+        # Re-labelled "Continue \u2192" once the run ends: from then on this screen
+        # is the log archive, reachable from both later screens.
+        self.close_btn = ttk.Button(btns, text="Close", command=self._on_run_screen_forward,
+                                     state="disabled")
         self.close_btn.pack(side="right")
 
     # -- event handlers ---------------------------------------------------
-    def _on_start(self):
+    def _on_continue_to_sudo(self):
+        """Options -> sudo. Validates everything that does not need a password,
+        so a bad Node ID is caught before anyone types a credential."""
         node_id = self.node_id_var.get().strip()
-        password = self.sudo_pw_var.get()
         if not node_id:
-            messagebox.showerror("Missing Node ID", "Node ID cannot be blank.")
-            return
-        if not password:
-            messagebox.showerror("Missing password", "Sudo password is required.")
+            messagebox.showerror("Missing Node ID", "Node ID / callsign cannot be blank.")
             return
         if os.geteuid() == 0:
             messagebox.showerror("Do not run as root",
                                   "Run this GUI as your normal user, not via sudo.")
             return
 
-        selected_ids = {cid for cid, var in self.component_vars.items() if var.get()}
-        if not selected_ids:
+        selected = {cid for cid, var in self.component_vars.items() if var.get()}
+        if not selected:
             if not messagebox.askyesno("No steps selected",
                                         "No steps are checked — this run will do nothing.\n"
-                                        "Start anyway?"):
+                                        "Continue anyway?"):
                 return
+        self.selected_ids = selected
 
-        self.askpass = AskpassSession(password)
-        self.sudo_pw_var.set("")  # drop the plaintext from the widget immediately
-        if not self.askpass.verify():
-            messagebox.showerror("Sudo authentication failed",
-                                  "That password did not validate with sudo.")
-            self.askpass.close()
-            self.askpass = None
+        if "sudo" not in self.frames:
+            self._build_sudo_screen()
+        labels = [c.label for c in COMPONENTS if c.id in selected]
+        if labels:
+            listing = "\n".join("    \u2022 " + l for l in labels)
+            self.sudo_summary.configure(
+                text="Node %s — %d step(s) selected:\n%s" % (node_id, len(labels), listing))
+        else:
+            self.sudo_summary.configure(text="Node %s — no steps selected." % node_id)
+        self.sudo_error.configure(text="")
+        self._show("sudo")
+        self.sudo_entry.focus_set()
+
+    def _on_start(self):
+        """Sudo -> run. Validates the password before leaving this screen, so a
+        typo is corrected here instead of surfacing mid-install."""
+        password = self.sudo_pw_var.get()
+        if not password:
+            self.sudo_error.configure(text="Enter your sudo password to continue.",
+                                      foreground="#c0392b")
             return
 
-        self._build_run_screen()
+        self.start_btn.configure(state="disabled")
+        self.sudo_error.configure(text="Checking credentials\u2026", foreground="#666666")
+        self.update_idletasks()
+
+        askpass = AskpassSession(password)
+        self.sudo_pw_var.set("")           # drop the plaintext from the widget
+        if not askpass.verify():
+            askpass.close()
+            self.sudo_error.configure(
+                text="That password did not validate with sudo. Try again.",
+                foreground="#c0392b")
+            self.start_btn.configure(state="normal")
+            self.sudo_entry.focus_set()
+            return
+        self.askpass = askpass
+
+        if "run" not in self.frames:
+            self._build_run_screen()
+        self._show("run")
 
         ctx = Ctx(
             home=Path.home(),
-            user=os.environ.get("USER") or os.getlogin(),
-            node_id=node_id,
+            user=_current_user(),
+            node_id=self.node_id_var.get().strip(),
             askpass=self.askpass,
             log=self._queue_log,
             cancel_check=self._cancel_check,
@@ -1432,10 +1982,76 @@ class ProvisionerGUI(tk.Tk):
             spin_stop=self._queue_spin_stop,
             spin_progress=self._queue_spin_progress,
         )
-
         self.worker = threading.Thread(target=self._run_provisioning,
-                                        args=(ctx, selected_ids), daemon=True)
+                                        args=(ctx, self.selected_ids), daemon=True)
         self.worker.start()
+
+    def _on_run_screen_forward(self):
+        """The run screen's right-hand button. Before verification exists it is
+        a plain Close; afterwards it is the way back to the results."""
+        if "verify" in self.frames:
+            self._show("verify")
+        else:
+            self.destroy()
+
+    def _on_show_summary(self):
+        if "summary" not in self.frames:
+            self._build_summary_screen()
+        self._render_summary()
+        self._show("summary")
+
+    def _render_summary(self):
+        node_id = self.node_id_var.get().strip()
+        passed = sum(1 for r in self.check_results if r.status == "pass")
+        warned = sum(1 for r in self.check_results if r.status == "warn")
+        failed = sum(1 for r in self.check_results if r.status == "fail")
+        ran = [c.label for c in COMPONENTS if c.id in self.selected_ids]
+        skipped = len(COMPONENTS) - len(ran)
+
+        if self.run_outcome == "cancelled":
+            title, tag = "Provisioning cancelled", "warn"
+        elif self.run_outcome == "failed" or failed:
+            title, tag = "Provisioning finished with problems", "err"
+        elif warned:
+            title, tag = "Provisioning complete \u2014 review warnings", "warn"
+        else:
+            title, tag = "Provisioning complete", "ok"
+        self.summary_title.configure(text=title)
+
+        t = self.summary_body
+        t.configure(state="normal")
+        t.delete("1.0", "end")
+        t.insert("end", "Node: ", "head"); t.insert("end", node_id + "\n\n")
+        t.insert("end", "Result\n", "head")
+        t.insert("end", "    %s\n" % title, tag)
+        t.insert("end", "    %d step(s) run, %d skipped\n\n" % (len(ran), skipped))
+
+        t.insert("end", "Verification\n", "head")
+        t.insert("end", "    %d passed\n" % passed, "ok")
+        if warned:
+            t.insert("end", "    %d warning(s)\n" % warned, "warn")
+        if failed:
+            t.insert("end", "    %d failed\n" % failed, "err")
+        if not self.check_results:
+            t.insert("end", "    nothing verified\n", "warn")
+        t.insert("end", "\n")
+
+        problems = [r for r in self.check_results if r.status in ("fail", "warn")]
+        if problems:
+            t.insert("end", "Needs attention\n", "head")
+            for r in problems[:12]:
+                t.insert("end", "    %s %s \u2014 %s\n"
+                         % ("\u2716" if r.status == "fail" else "!", r.label, r.detail),
+                         "err" if r.status == "fail" else "warn")
+            if len(problems) > 12:
+                t.insert("end", "    \u2026and %d more (see the previous screen)\n"
+                         % (len(problems) - 12))
+            t.insert("end", "\n")
+
+        t.insert("end", "Next\n", "head")
+        t.insert("end", "    Work through 'Pre-Deployment Config Checklist' in the repo root \u2014\n"
+                        "    it covers what this tool cannot check without real hardware.\n")
+        t.configure(state="disabled")
 
     def _on_cancel(self):
         if messagebox.askyesno("Cancel provisioning",
@@ -1473,8 +2089,11 @@ class ProvisionerGUI(tk.Tk):
                 self._queue_log(f"===== {comp.label} =====", "info")
                 comp.fn(ctx)
             self.msg_queue.put(("done", True, ctx.node_id))
+            self._queue_verification(ctx, selected_ids)
         except ProvisioningCancelled:
             self.msg_queue.put(("cancelled", None, None))
+            # Still verify: what did land before the stop is the useful part.
+            self._queue_verification(ctx, selected_ids)
         except subprocess.CalledProcessError as e:
             cmd_str = " ".join(str(c) for c in e.cmd) if isinstance(e.cmd, (list, tuple)) else str(e.cmd)
             self._queue_log(f"[!] Command failed: {cmd_str} (exit {e.returncode})", "err")
@@ -1487,12 +2106,25 @@ class ProvisionerGUI(tk.Tk):
                 for line in lines:
                     self._queue_log(f"  {line}", "err")
             self.msg_queue.put(("done", False, None))
+            self._queue_verification(ctx, selected_ids)
         except Exception as e:  # noqa: BLE001 — surface anything unexpected to the user
             self._queue_log(f"[!] Unexpected error: {e!r}", "err")
             self.msg_queue.put(("done", False, None))
+            self._queue_verification(ctx, selected_ids)
         finally:
             if ctx.askpass:
                 ctx.askpass.close()
+
+    def _queue_verification(self, ctx: Ctx, selected_ids: set):
+        """Run the read-only checks on the worker thread and stream each row to
+        the UI. Never raises: a broken check must not mask the run's outcome."""
+        try:
+            results = verify_deployment(ctx, selected_ids)
+        except Exception as e:  # noqa: BLE001
+            results = [CheckResult("Verification itself failed", "fail", repr(e))]
+        for r in results:
+            self.msg_queue.put(("verify_row", r))
+        self.msg_queue.put(("verify_done", len(results)))
 
     # -- UI thread: drain queue --------------------------------------------
     def _drain_queue(self):
@@ -1522,18 +2154,59 @@ class ProvisionerGUI(tk.Tk):
                     self.cancel_btn.configure(state="disabled")
                     self.close_btn.configure(state="normal")
                     if success:
+                        self.run_outcome = "completed"
                         self.step_label.configure(text=f"Provisioning complete — Node: {node_id}")
                         self._append_log(f"=== PROVISIONING COMPLETE for Node: {node_id} ===", "ok")
                     else:
+                        self.run_outcome = "failed"
                         self.step_label.configure(text="Provisioning failed — see log")
+                    self._begin_verification()
                 elif kind == "cancelled":
+                    self.run_outcome = "cancelled"
                     self.step_label.configure(text="Cancelled")
                     self._append_log("=== Cancelled by user ===", "warn")
                     self.cancel_btn.configure(state="disabled")
                     self.close_btn.configure(state="normal")
+                    self._begin_verification()
+                elif kind == "verify_row":
+                    _, result = item
+                    self._add_verify_row(result)
+                elif kind == "verify_done":
+                    self._finish_verification()
         except queue.Empty:
             pass
         self.after(100, self._drain_queue)
+
+    def _begin_verification(self):
+        """Deployment finished (any outcome) — move to the verification screen."""
+        if "verify" not in self.frames:
+            self._build_verify_screen()
+        self.check_results = []
+        for row in self.verify_tree.get_children():
+            self.verify_tree.delete(row)
+        self.verify_title.configure(text="Verifying deployment\u2026")
+        self.verify_continue_btn.configure(state="disabled")
+        self.close_btn.configure(text="Continue \u2192")
+        self._show("verify")
+
+    def _add_verify_row(self, result):
+        self.check_results.append(result)
+        glyph = {"pass": "\u2714", "warn": "!", "fail": "\u2716"}.get(result.status, "?")
+        self.verify_tree.insert("", "end", values=(glyph, result.label, result.detail),
+                                 tags=(result.status,))
+        self.verify_tree.yview_moveto(1.0)
+
+    def _finish_verification(self):
+        passed = sum(1 for r in self.check_results if r.status == "pass")
+        warned = sum(1 for r in self.check_results if r.status == "warn")
+        failed = sum(1 for r in self.check_results if r.status == "fail")
+        parts = ["%d passed" % passed]
+        if warned:
+            parts.append("%d warning(s)" % warned)
+        if failed:
+            parts.append("%d failed" % failed)
+        self.verify_title.configure(text="Verification \u2014 " + ", ".join(parts))
+        self.verify_continue_btn.configure(state="normal")
 
     def _append_log(self, message: str, level: str):
         self.log_widget.configure(state="normal")
