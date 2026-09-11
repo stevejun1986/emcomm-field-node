@@ -23,23 +23,26 @@ before an hour of package installation.
 
 | # | Step | Watch for |
 | --- | --- | --- |
-| 1 | Sudo config + callsign | `/etc/emcomm/node.conf` written; sudoers file is mode 0440 |
-| 2 | App profiles | Placeholders substituted — see the check below |
+| 1 | Callsign / node ID + system hostname | `/etc/emcomm/node.conf` written; sudoers mode 0440; `hostname` returns the callsign; `sudo` stays instant afterwards (if it stalls ~10s, the `/etc/hosts` entry did not take) |
+| 2 | App profiles + ALE channel plan | Placeholders substituted — see the check below |
 | 3 | Desktop shortcuts | Missing `.desktop` files warn rather than fail |
 | 4 | Reference library + doc server | `curl -sI http://127.0.0.1:8085` returns 200 |
-| 5 | Map tiles | Run `--estimate-only` first; the count is easy to get wrong |
-| 6 | System packages | Slow. Confirm no interactive prompt stalls it |
-| 7 | QLog + ion2G | Checksum must verify; re-run to confirm it is idempotent |
+| 5 | Offline map tiles | Needs a `configs/areas/*.json` that is not `example-area.json`, or the step correctly refuses. Run the fetcher with `--estimate-only` first; the count is easy to get wrong |
+| 6 | System packages + Wine init | Slowest step. Confirm no interactive prompt stalls it |
+| 7 | QLog station log + ion2G HF ALE | Checksum must verify; re-run to confirm it is idempotent |
 | 8 | Offline knowledgebase | Large download; the pinned URL will eventually rotate |
 | 9 | Direwolf / Meshtastic | Needs hardware to validate beyond "it installed" |
 | 10 | SatDump | Slowest by far if it falls back to a source build |
-| 11 | Dock trigger | Only meaningful with a dock; the udev ID is a placeholder |
-| 12 | Appliance build | Destructive. Test last, on a VM you can roll back |
+| 11 | Dock-trigger autostart | **Havis DS-PAN-111 + CF-30 only.** The udev rule matches that dock's hub (`05e3:0610`) — it is the real ID, not a placeholder. On other hardware the files install and the rule simply never fires. See **Supported Hardware** in the README |
+| 12 | Slim appliance build | Destructive — `apt purge`s preinstalled apps and disables mintupdate. Test last, on a VM you can roll back |
 
 ## The check that matters most
 
-After the app-profiles step, confirm no placeholder survived and no foreign
-identity got baked in:
+The verification screen now runs this automatically at the end of every run —
+`JS8Call placeholders substituted`, `JS8Call MyCall set to this node`, and
+`JS8Call grid square` are three of its rows. Check it there first.
+
+To confirm by hand, or on a node provisioned before that screen existed:
 
 ```bash
 grep -nE "PLACEHOLDER|MyCall|MyGrid" ~/.config/JS8Call.ini
