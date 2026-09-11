@@ -10,8 +10,9 @@ configs/*.csv
 configs/*.zcp
 configs/*.txt
 configs/areas/*.json
-# ...but the sample area IS tracked, as a starting point
-!configs/areas/example-area.json
+# ...but the sample IS tracked. It ships as .json.sample so it can never be
+# mistaken for a live area: copy it to <your-area>.json rather than editing it.
+!configs/areas/example-area.json.sample
 
 # Reference library and cached packages are large and license-varied
 docs/*.pdf

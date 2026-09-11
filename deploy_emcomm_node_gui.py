@@ -741,9 +741,14 @@ def step_maps_fetch(ctx: Ctx):
     # the spinner still resolved green, so the area is resolved here and a
     # missing one is reported rather than silently producing an empty map.
     area_dir = Path("configs/areas")
-    areas = sorted(p for p in area_dir.glob("*.json") if p.name != "example-area.json")
+    # Any *.json here is an operating area. The sample ships as .json.sample
+    # precisely so that it is NOT one: the documented instruction is "copy it
+    # and edit", and a name-based exclusion meant an operator who edited the
+    # sample in place had their area silently ignored.
+    areas = sorted(area_dir.glob("*.json"))
     if not areas:
-        ctx.log(f"[!] No operating area defined. Copy {area_dir}/example-area.json, "
+        ctx.log(f"[!] No operating area defined. Copy "
+                f"{area_dir}/example-area.json.sample to {area_dir}/<your-area>.json, "
                 f"set your own bounds, and re-run this step — no tiles fetched.", "warn")
         return
 

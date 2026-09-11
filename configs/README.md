@@ -66,10 +66,14 @@ counts roughly quadruple per zoom level:
 ./scripts/fetch_map_tiles.py --area configs/areas/your-area.json --estimate-only
 ```
 
-The map tile step reads **every `areas/*.json` except `example-area.json`**, and
-fetches each layer for each area. Define at least one of your own or the step
-fetches nothing and says so — it will not silently produce an empty map.
+The map tile step reads **every `areas/*.json`** and fetches each layer for each
+area. Define at least one or the step fetches nothing and says so — it will not
+silently produce an empty map.
 
-`example-area.json` is a sample around Washington DC, deliberately chosen as a
-neutral public reference. Replace it; do not commit your group's real area unless
-you are content for it to be public.
+`example-area.json.sample` is a sample around Washington DC, deliberately chosen
+as a neutral public reference. **Copy it to `<your-area>.json` and edit the copy** —
+do not edit the sample in place. It carries the `.sample` suffix so it is never
+read as a live area, which is what makes "copy it" the only workflow that works.
+
+Do not commit your group's real area unless you are content for it to be public;
+`.gitignore` keeps `areas/*.json` out of the repository for that reason.

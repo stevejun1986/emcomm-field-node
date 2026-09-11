@@ -27,7 +27,7 @@ before an hour of package installation.
 | 2 | App profiles + ALE channel plan | Placeholders substituted — see the check below |
 | 3 | Desktop shortcuts | Missing `.desktop` files warn rather than fail |
 | 4 | Reference library + doc server | `curl -sI http://127.0.0.1:8085` returns 200 |
-| 5 | Offline map tiles | Needs a `configs/areas/*.json` that is not `example-area.json`, or the step correctly refuses. Run the fetcher with `--estimate-only` first; the count is easy to get wrong |
+| 5 | Offline map tiles | Needs a `configs/areas/<your-area>.json` (copy `example-area.json.sample`), or the step correctly refuses. Run the fetcher with `--estimate-only` first; the count is easy to get wrong |
 | 6 | System packages + Wine init | Slowest step. Confirm no interactive prompt stalls it |
 | 7 | QLog station log + ion2G HF ALE | Checksum must verify; re-run to confirm it is idempotent |
 | 8 | Offline knowledgebase | Large download; the pinned URL will eventually rotate |
