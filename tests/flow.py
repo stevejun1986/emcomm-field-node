@@ -1,6 +1,7 @@
 """Five-screen flow, verification wiring, and the CF-30 panel constraint.
 
-    xvfb-run -a python3 tests/flow.py        # from the repository root
+    python3 tests/flow.py                    # on a desktop session
+    xvfb-run -a python3 tests/flow.py        # headless
 
 Needs a Python with tkinter and a display (xvfb is fine). Exercises the real
 GUI: no credential is prompted for before the options are valid, a bad password
@@ -8,8 +9,14 @@ is retryable in place, verification populates after the run, and every screen
 fits the reference 1024x768 panel — pack() clips silently, so a screen that
 outgrows the display hides its own controls with no error.
 """
-import sys, dataclasses
-sys.path.insert(0, ".")
+import os, sys, dataclasses
+from pathlib import Path
+
+# Resolve the provisioner relative to this file, so the test runs the same
+# from the repository root or from inside tests/.
+REPO = Path(__file__).resolve().parent.parent
+os.chdir(REPO)
+sys.path.insert(0, str(REPO))
 import deploy_emcomm_node_gui as mod
 mod.os.geteuid = lambda: 1000
 mod.messagebox.showerror = lambda *a, **k: None

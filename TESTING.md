@@ -80,9 +80,13 @@ machine, since several failures only appear on a second run.
 ## Dry run (no VM required)
 
 ```bash
-python3 tests/dryrun.py .          # every step, nothing installed
-xvfb-run -a python3 tests/flow.py  # the five screens and verification wiring
+python3 tests/dryrun.py     # every step, nothing installed
+python3 tests/flow.py       # the five screens and verification wiring
 ```
+
+`tests/flow.py` needs Tk (`sudo apt install python3-tk`) and a display. On a
+desktop session it just runs; headless, prefix it with `xvfb-run -a`. Both
+scripts work from the repository root or from inside `tests/`.
 
 Runs the real step functions with `subprocess`, downloads and `shutil.which`
 replaced by recorders, against a throwaway `$HOME`. Nothing is installed and

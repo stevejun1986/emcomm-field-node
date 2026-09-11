@@ -1,9 +1,9 @@
 """Execute every provisioning step with the subprocess/network boundary stubbed.
 
-    python3 tests/dryrun.py .                 # as if nothing is installed yet
+    python3 tests/dryrun.py                   # as if nothing is installed yet
     python3 tests/dryrun.py . wine,js8call    # as if those are already present
 
-Run it from the repository root. Provisioning cannot be exercised in CI or a
+Provisioning cannot be exercised in CI or a
 container — it installs packages and writes to /etc — so this runs the real step
 functions with subprocess, downloads and shutil.which replaced by recorders, and
 prints what each step WOULD do. It catches wiring and reporting faults (a step
@@ -17,7 +17,9 @@ wrong path shows up in the transcript.
 import importlib.util, os, shutil, subprocess as real_subprocess, sys, tempfile, traceback, types
 from pathlib import Path
 
-REPO = Path(sys.argv[1]).resolve()
+# Both arguments optional: the repo defaults to the one this file lives in, so
+# the test runs the same from the root, from tests/, or by absolute path.
+REPO = Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else Path(__file__).resolve().parent.parent
 INSTALLED = set(sys.argv[2].split(",")) if len(sys.argv) > 2 and sys.argv[2] else set()
 
 os.chdir(REPO)
