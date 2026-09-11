@@ -1,8 +1,27 @@
 # Working in this repository
 
 Provisioner for an EMCOMM field node — an offline-capable emergency
-communications workstation on Linux Mint. Single variant, single branch (`main`),
-no CI. See `README.md` for the software stack and `TESTING.md` for how to test.
+communications workstation on Linux Mint. Single variant, no CI. See `README.md`
+for the software stack and `TESTING.md` for how to test.
+
+---
+
+## Pull requests
+
+**Every change goes through a pull request. Never push to `main`.**
+
+Branch from current `main`, push the branch, open the PR against `main`, and say
+plainly what it changes and what you verified. The repository owner reviews and
+merges; do not merge your own pull request.
+
+Use `claude/<short-description>` for branch names. One PR per coherent change —
+a fix and an unrelated cleanup are two pull requests, because they are two review
+decisions.
+
+State what you did **not** verify as clearly as what you did. Nothing here can be
+exercised end to end without a VM and, for the dock automation, the physical
+hardware — so "tests pass" and "this works" are different claims and should not
+be written as if they were the same one.
 
 ---
 
