@@ -74,3 +74,25 @@ checksum. If a step is not safely re-runnable, that is a bug worth reporting.
 Include the step name, the red `✖` line, and the captured output beneath it —
 that block is the actual error. Note whether the step had been run before on that
 machine, since several failures only appear on a second run.
+
+---
+
+## Dry run (no VM required)
+
+```bash
+python3 tests/dryrun.py .
+```
+
+Runs the real step functions with `subprocess`, downloads and `shutil.which`
+replaced by recorders, against a throwaway `$HOME`. Nothing is installed and
+nothing outside that directory is touched. It prints, per step, every command
+that would run, every file that would be written, and every log line.
+
+Read the transcript for **steps that report success having done nothing**. That
+is the failure mode this project keeps producing: a profile copied from a path
+that does not exist, a fetch invoked with arguments it rejects, a green summary
+line sitting outside the branch that earned it. All of those are invisible on a
+real machine until someone needs the radio.
+
+It does not cover runtime behaviour — real downloads, real archive extraction,
+real `apt`. A VM run is still required before any deployment.

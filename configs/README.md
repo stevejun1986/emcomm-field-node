@@ -66,6 +66,10 @@ counts roughly quadruple per zoom level:
 ./scripts/fetch_map_tiles.py --area configs/areas/your-area.json --estimate-only
 ```
 
+The map tile step reads **every `areas/*.json` except `example-area.json`**, and
+fetches each layer for each area. Define at least one of your own or the step
+fetches nothing and says so — it will not silently produce an empty map.
+
 `example-area.json` is a sample around Washington DC, deliberately chosen as a
 neutral public reference. Replace it; do not commit your group's real area unless
 you are content for it to be public.

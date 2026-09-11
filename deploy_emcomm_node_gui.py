@@ -144,6 +144,18 @@ DOCS_SERVER_UNIT = UNIT_PREFIX + "-docs-server.service"
 AUTOSTART_SCRIPT = UNIT_PREFIX + "-autostart-sequence.sh"
 DOCK_EVENT_SH    = "/usr/local/bin/" + UNIT_PREFIX + "-dock-event.sh"
 
+# Offline map layers: (fetcher --layer value, QMapShack .tms filename, title).
+#
+# The fetcher writes tiles to Offline_Tiles/<layer>/, and the .tms files below
+# are generated from the same tuple, so the two can no longer disagree. They
+# did: the .tms files pointed at Offline_Tiles/Topo/ and .../Satellite/ while
+# the fetcher wrote .../topo/ and .../imagery/, so QMapShack found nothing
+# even when tiles were present.
+MAP_LAYERS = (
+    ("topo",    "Topo_Offline.tms",      "Topographic (Offline)"),
+    ("imagery", "Satellite_Offline.tms", "Satellite Imagery (Offline)"),
+)
+
 try:
     import requests
 except ImportError:
@@ -625,21 +637,57 @@ def step_qlog_ion2g(ctx: Ctx):
         if ion2g_exe:
             (ctx.home / STATE_DIR_NAME / "ion2g_exe_path").write_text(str(ion2g_exe) + "\n")
             ctx.log(f"[+] ion2G executable located at: {ion2g_exe}", "ok")
+            ctx.log(f"[+] ion2G extracted to {ion2g_install_dir}", "ok")
         else:
-            ctx.log("[!] Warning: ion2g.exe not found after extraction!", "err")
-        ctx.log(f"[+] ion2G extracted to {ion2g_install_dir}", "ok")
+            ctx.log(f"[!] ion2g.exe not found under {ion2g_install_dir} after extraction "
+                    f"— the archive layout may have changed. ion2G is NOT usable.", "err")
 
     temp_zip.unlink(missing_ok=True)
 
 
 def step_maps_fetch(ctx: Ctx):
-    (ctx.data_dir / "Offline_Maps").mkdir(parents=True, exist_ok=True)
+    tiles_dir = ctx.data_dir / "Offline_Maps" / "Offline_Tiles"
+    tiles_dir.mkdir(parents=True, exist_ok=True)
     fetch_script = Path("scripts/fetch_map_tiles.py")
-    if fetch_script.is_file():
-        with ctx.spin("Executing regional tile fetch..."):
-            ctx.run([sys.executable, str(fetch_script)], check=False)
-    else:
+    if not fetch_script.is_file():
         ctx.log("[!] Error: scripts/fetch_map_tiles.py not found in repo!", "err")
+        return
+
+    # The fetcher refuses to guess an area: with no bounds it exits 2 before
+    # downloading anything. Invoked bare it therefore fetched nothing while
+    # the spinner still resolved green, so the area is resolved here and a
+    # missing one is reported rather than silently producing an empty map.
+    area_dir = Path("configs/areas")
+    areas = sorted(p for p in area_dir.glob("*.json") if p.name != "example-area.json")
+    if not areas:
+        ctx.log(f"[!] No operating area defined. Copy {area_dir}/example-area.json, "
+                f"set your own bounds, and re-run this step — no tiles fetched.", "warn")
+        return
+
+    ok_count, fail_count = 0, 0
+    for area in areas:
+        for layer, _tms, _title in MAP_LAYERS:
+            rc = 1
+            with ctx.spin(f"Fetching {layer} tiles for {area.stem}...") as result:
+                # --yes because there is no terminal to answer the size prompt;
+                # stdin is DEVNULL, so the confirmation would raise EOFError.
+                rc = ctx.run([sys.executable, str(fetch_script),
+                              "--area", str(area), "--layer", layer,
+                              "--out", str(tiles_dir), "--yes"],
+                             check=False).returncode
+                result.ok = (rc == 0)
+            if rc == 0:
+                ok_count += 1
+            else:
+                fail_count += 1
+                ctx.log(f"[!] Tile fetch failed for {area.stem} / {layer} (exit {rc}).", "err")
+
+    if ok_count and not fail_count:
+        ctx.log(f"[+] Tiles fetched for {ok_count} area/layer combination(s).", "ok")
+    elif ok_count:
+        ctx.log(f"[!] Tiles fetched for {ok_count}, failed for {fail_count} — see errors above.", "warn")
+    else:
+        ctx.log("[!] No tiles fetched — every fetch failed.", "err")
 
 
 def step_kiwix_zim(ctx: Ctx):
@@ -666,7 +714,11 @@ def step_kiwix_zim(ctx: Ctx):
     else:
         ctx.log("[!] kiwix-manage not found — ZIM not registered. Add manually via the app.", "warn")
 
-    ctx.log("[+] Data acquisition pipeline executed.", "ok")
+    if kiwix_zim_ok:
+        ctx.log("[+] Offline knowledgebase staged.", "ok")
+    else:
+        ctx.log("[!] Offline knowledgebase NOT staged — the ZIM failed its integrity "
+                "check and was discarded.", "err")
     (ctx.data_dir / "Kiwix_ZIM" / "README.txt").write_text(
         "Place offline .zim files (e.g., Wikipedia, Medical, Survival) into this folder.\n"
     )
@@ -676,9 +728,14 @@ def step_docs_server(ctx: Ctx):
     (ctx.data_dir / "PDF_Manuals").mkdir(parents=True, exist_ok=True)
     docs_dir = Path("docs")
     if docs_dir.is_dir():
-        for pdf in docs_dir.glob("*.pdf"):
+        pdfs = sorted(docs_dir.glob("*.pdf"))
+        for pdf in pdfs:
             shutil.copy(pdf, ctx.data_dir / "PDF_Manuals" / pdf.name)
-        ctx.log("[+] Field manuals copied from local repo.", "ok")
+        if pdfs:
+            ctx.log(f"[+] {len(pdfs)} field manual(s) copied from local repo.", "ok")
+        else:
+            ctx.log("[!] No PDFs in docs/ — the document server will serve an empty "
+                    "library. Add your reference material there before deployment.", "warn")
     else:
         ctx.log("[!] Error: docs/ directory not found — running outside the cloned repo?", "err")
 
@@ -712,12 +769,19 @@ def step_config_profiles(ctx: Ctx):
     # QMapShack profile carries HOME_PLACEHOLDER tokens instead of absolute paths,
     # so it does not assume the operator's username.
     qms_conf = ctx.home / ".config" / "QLandkarteGT" / "QMapShack.conf"
+    # A profile that is absent must not be summarised as "staged" — that is
+    # exactly how a node reaches the field on application defaults.
+    staged, missing = [], []
+
     qms_src = Path("configs/QMapShack.conf")
     if qms_src.is_file():
         shutil.copy(qms_src, qms_conf)
         qms_conf.write_text(qms_conf.read_text().replace("HOME_PLACEHOLDER", str(ctx.home)))
+        ctx.log(f"[+] QMapShack profile staged to {qms_conf}.", "ok")
+        staged.append("QMapShack")
     else:
         ctx.log(f"[!] Warning: {qms_src} not found — QMapShack left unconfigured.", "warn")
+        missing.append("QMapShack")
 
     # JS8Call stores its config as ~/.config/JS8Call.ini (Qt app name, case-sensitive).
     # The shipped profile carries MYCALL_PLACEHOLDER and HOME_PLACEHOLDER tokens so no
@@ -731,8 +795,10 @@ def step_config_profiles(ctx: Ctx):
         text = text.replace("HOME_PLACEHOLDER", str(ctx.home))
         js8call_ini.write_text(text)
         ctx.log(f"[+] JS8Call profile staged to {js8call_ini} (MyCall={ctx.node_id}).", "ok")
+        staged.append("JS8Call")
     else:
         ctx.log(f"[!] Warning: {js8call_src} not found — JS8Call left unconfigured.", "warn")
+        missing.append("JS8Call")
 
     chirp_csv = Path("configs/analog_channels.csv")
     if chirp_csv.is_file():
@@ -741,7 +807,11 @@ def step_config_profiles(ctx: Ctx):
             chirp_dir.mkdir(parents=True, exist_ok=True)
             ctx.log("[*] CHIRP directory did not exist — created it.", "warn")
         shutil.copy(chirp_csv, chirp_dir / chirp_csv.name)
-        ctx.log("[+] UV-5RM codeplug staged to CHIRP runtime path.", "ok")
+        ctx.log(f"[+] CHIRP channel list staged to {chirp_dir / chirp_csv.name}.", "ok")
+        staged.append("CHIRP")
+    else:
+        ctx.log(f"[!] Warning: {chirp_csv} not found — CHIRP left unconfigured.", "warn")
+        missing.append("CHIRP")
 
     # --- STAGE ALE CHANNEL PLAN FOR ion2G ---
     ale_src = Path("configs/ale_channels.zcp")
@@ -750,27 +820,20 @@ def step_config_profiles(ctx: Ctx):
         dest_dir.mkdir(parents=True, exist_ok=True)
         shutil.copy(ale_src, dest_dir / "ale_channels.zcp")
         ctx.log(f"[+] ALE channel plan staged to {dest_dir}/", "ok")
+        staged.append("ALE plan")
     else:
         ctx.log(f"[!] Warning: {ale_src} not found — ALE channel plan not staged.", "warn")
+        missing.append("ALE plan")
 
-    (ctx.data_dir / "Offline_Maps" / "Topo_Offline.tms").write_text(f"""<TMS>
+    # Generated from MAP_LAYERS so the directory a .tms reads from is always
+    # the directory the fetcher wrote to.
+    for layer, tms_name, title in MAP_LAYERS:
+        (ctx.data_dir / "Offline_Maps" / tms_name).write_text(f"""<TMS>
 <Layer idx="0">
-  <Title>Topographic (Offline)</Title>
+  <Title>{title}</Title>
   <Script><![CDATA[(
   function createPath(z, x, y) {{
-      return "file://{ctx.data_dir}/Offline_Maps/Offline_Tiles/Topo/" + z + "/" + x + "/" + y + ".png";
-  }}
-  )]]></Script>
-</Layer>
-</TMS>
-""")
-
-    (ctx.data_dir / "Offline_Maps" / "Satellite_Offline.tms").write_text(f"""<TMS>
-<Layer idx="0">
-  <Title>Satellite Imagery (Offline)</Title>
-  <Script><![CDATA[(
-  function createPath(z, x, y) {{
-      return "file://{ctx.data_dir}/Offline_Maps/Offline_Tiles/Satellite/" + z + "/" + x + "/" + y + ".png";
+      return "file://{ctx.data_dir}/Offline_Maps/Offline_Tiles/{layer}/" + z + "/" + x + "/" + y + ".png";
   }}
   )]]></Script>
 </Layer>
@@ -790,7 +853,15 @@ def step_config_profiles(ctx: Ctx):
     else:
         ctx.log("[!] QMapShack.conf mapPath line not found — .tms files may need manual import.", "warn")
 
-    ctx.log("[+] Base config profiles successfully staged.", "ok")
+    if staged and not missing:
+        ctx.log(f"[+] Config profiles staged: {', '.join(staged)}.", "ok")
+    elif staged:
+        ctx.log(f"[!] Staged {', '.join(staged)} — NOT staged: {', '.join(missing)}. "
+                f"Those applications will start on their own defaults.", "warn")
+    else:
+        ctx.log("[!] No config profiles staged — configs/ is empty or this is not "
+                "being run from the repository root. Every application will start "
+                "unconfigured.", "err")
     ctx.sudo("systemctl", "enable", "gpsd.socket")
     ctx.sudo("systemctl", "enable", "chrony")
 
