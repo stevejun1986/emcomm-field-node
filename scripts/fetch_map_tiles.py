@@ -66,7 +66,12 @@ SOURCES = {
     ),
 }
 
-DEFAULT_UA = "EMCOMM-Field-Node-TileFetcher/1.0 (set --user-agent with a contact address)"
+# Keep in step with OPERATOR_PREFIX in the provisioner; this script is
+# standalone by design and cannot import from it.
+OPERATOR_PREFIX = "EMCOMM"
+DATA_DIR_NAME = OPERATOR_PREFIX + "_Data"
+
+DEFAULT_UA = OPERATOR_PREFIX + "-Field-Node-TileFetcher/1.0 (set --user-agent with a contact address)"
 
 
 def deg2num(lat_deg: float, lon_deg: float, zoom: int) -> tuple[int, int]:
@@ -142,7 +147,7 @@ def main() -> int:
     ap.add_argument("--min-zoom", type=int, default=10)
     ap.add_argument("--max-zoom", type=int, default=15)
     ap.add_argument("--out", type=Path,
-                    default=Path.home() / "EMCOMM_Data" / "Offline_Maps" / "Offline_Tiles")
+                    default=Path.home() / DATA_DIR_NAME / "Offline_Maps" / "Offline_Tiles")
     ap.add_argument("--delay", type=float, default=0.1,
                     help="seconds between requests; be polite to the tile server (default 0.1)")
     ap.add_argument("--timeout", type=int, default=30)

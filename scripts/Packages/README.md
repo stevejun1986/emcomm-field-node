@@ -7,7 +7,6 @@ their own licensing.
 | Item | Used by |
 | --- | --- |
 | `satdump_<version>_<distro>_amd64.deb` | SatDump step, if present |
-| `Desktop Images/wallpaper.jpg` | Desktop shortcuts step, if present |
 
 If no SatDump `.deb` is present the provisioner falls back to building from
 source, which works but takes considerably longer.

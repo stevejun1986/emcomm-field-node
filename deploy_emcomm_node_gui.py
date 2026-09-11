@@ -58,7 +58,7 @@ warning when a file is absent, so a partial set is fine:
     configs/satdump_tles.txt     Curated TLE set for SatDump
     scripts/fetch_map_tiles.py   Offline map tile fetcher for your area
     docs/*.pdf                   Reference library, served over loopback
-    scripts/Packages/            Locally cached .deb, wallpaper image
+    scripts/Packages/            Locally cached .deb packages
 
 PROFILE PLACEHOLDERS
 Shipped profiles must not carry a real callsign or an absolute home
@@ -106,6 +106,44 @@ from pathlib import Path
 from tkinter import messagebox, scrolledtext, ttk
 from typing import Callable, Optional
 
+# ===========================================================================
+# Naming
+#
+# Every path, unit and file name in this provisioner derives from the
+# constants below, so a group deploying under its own name edits this block
+# and nothing else.
+#
+# Four namespaces, four conventions, each matching whatever reads it:
+#
+#   OPERATOR_PREFIX  $HOME directories an operator browses, possibly under
+#                    stress. CamelCase with an underscore, which sorts them
+#                    above Desktop/Documents in a file manager — deliberate:
+#                    field data belongs at the top of the home folder, not
+#                    buried under ~/.local/share.
+#   STATE_DIR_NAME   hidden per-user state the operator never opens.
+#   SYSTEM_DIR       system configuration. FHS-conventional lowercase.
+#   UNIT_PREFIX      systemd units, udev-invoked scripts, the sudoers
+#                    drop-in — anything read by system tooling. Lowercase
+#                    with hyphens, which is systemd's own convention and the
+#                    usual shape for an executable in /usr/local/bin.
+# ===========================================================================
+
+PROJECT         = "emcomm"
+OPERATOR_PREFIX = "EMCOMM"
+STATE_DIR_NAME  = "." + PROJECT
+SYSTEM_DIR      = "/etc/" + PROJECT
+UNIT_PREFIX     = PROJECT
+
+DATA_DIR_NAME = OPERATOR_PREFIX + "_Data"
+APPS_DIR_NAME = OPERATOR_PREFIX + "_Apps"
+
+NODE_CONF        = SYSTEM_DIR + "/node.conf"
+SUDOERS_FILE     = "/etc/sudoers.d/" + UNIT_PREFIX + "-automation"
+AUTOSTART_UNIT   = UNIT_PREFIX + "-autostart.service"
+DOCS_SERVER_UNIT = UNIT_PREFIX + "-docs-server.service"
+AUTOSTART_SCRIPT = UNIT_PREFIX + "-autostart-sequence.sh"
+DOCK_EVENT_SH    = "/usr/local/bin/" + UNIT_PREFIX + "-dock-event.sh"
+
 try:
     import requests
 except ImportError:
@@ -148,7 +186,7 @@ class AskpassSession:
     """
 
     def __init__(self, password: str):
-        fd, path = tempfile.mkstemp(prefix="emcomm_askpass_", suffix=".sh")
+        fd, path = tempfile.mkstemp(prefix=UNIT_PREFIX + "-askpass-", suffix=".sh")
         os.close(fd)
         self.path = Path(path)
         # Single-quote-safe embedding of the password.
@@ -188,7 +226,7 @@ class Ctx:
     satdump_installed: bool = False
 
     def __post_init__(self):
-        self.data_dir = self.home / "EMCOMM_Data"
+        self.data_dir = self.home / DATA_DIR_NAME
         # Nothing here has a terminal to prompt into (unzip's "replace
         # file?", apt's debconf dialogs, needrestart's service-restart
         # prompt). Without a way to answer, an interactive prompt is a
@@ -311,10 +349,10 @@ AUTOSTART_SEQUENCE_SH = r"""#!/bin/bash
 export DISPLAY=:0
 export XAUTHORITY=$HOME/.Xauthority
 
-mkdir -p "$HOME/.emcomm"
-exec >> "$HOME/.emcomm/autostart.log" 2>&1
+mkdir -p "$HOME/@STATE_DIR@"
+exec >> "$HOME/@STATE_DIR@/autostart.log" 2>&1
 
-LOCKFILE="/tmp/emcomm_autostart.lock"
+LOCKFILE="/tmp/@UNIT_PREFIX@-autostart.lock"
 if [ -f "$LOCKFILE" ] && kill -0 "$(cat "$LOCKFILE")" 2>/dev/null; then
     echo "[!] Autostart already running (PID $(cat "$LOCKFILE")) — exiting."
     exit 0
@@ -352,7 +390,7 @@ sleep 1
 
 echo "[3/6] Starting ADS-B Radar Engine..."
 if [ -d "$HOME/dump1090" ]; then
-    tmux new-session -d -s emcomm_adsb "cd $HOME/dump1090 && ./dump1090 --interactive"
+    tmux new-session -d -s @UNIT_PREFIX@-adsb "cd $HOME/dump1090 && ./dump1090 --interactive"
 fi
 sleep 1
 
@@ -380,7 +418,7 @@ fi
 sleep 2
 
 echo "[5/6] Initializing ion2G HF ALE ..."
-ION2G_EXE_PATH="$(cat "$HOME/.emcomm/ion2g_exe_path" 2>/dev/null)"
+ION2G_EXE_PATH="$(cat "$HOME/@STATE_DIR@/ion2g_exe_path" 2>/dev/null)"
 if [ -n "$ION2G_EXE_PATH" ] && [ -f "$ION2G_EXE_PATH" ]; then
     (cd "$(dirname "$ION2G_EXE_PATH")" && wine "$ION2G_EXE_PATH" &)
 fi
@@ -394,7 +432,7 @@ if command -v qmapshack &> /dev/null; then
     qmapshack &
 fi
 
-echo "=== [$(date)] EMCOMM Operational Stack Deployed ==="
+echo "=== [$(date)] @OPERATOR_PREFIX@ Operational Stack Deployed ==="
 """
 
 MESHTASTIC_SETUP_MD = """# Meshtastic Node Setup Reference
@@ -484,12 +522,12 @@ def step_sudoers_and_node_id(ctx: Ctx):
         f"{ctx.user} ALL=(ALL) NOPASSWD: /bin/systemctl status gpsd.socket\n"
         f"{ctx.user} ALL=(ALL) NOPASSWD: /bin/systemctl status chrony\n"
     )
-    ctx.sudo_write("/etc/sudoers.d/emcomm_automation", sudoers_content, mode="0440")
+    ctx.sudo_write(SUDOERS_FILE, sudoers_content, mode="0440")
     ctx.log(f"[+] Service execution privileges set for {ctx.user}.", "ok")
 
     ctx.log(f"[+] Configuring Node ID: {ctx.node_id}", "ok")
-    ctx.sudo("mkdir", "-p", "/etc/emcomm")
-    ctx.sudo_write("/etc/emcomm/node.conf", f"NODE_ID={ctx.node_id}\n")
+    ctx.sudo("mkdir", "-p", SYSTEM_DIR)
+    ctx.sudo_write(NODE_CONF, f"NODE_ID={ctx.node_id}\n")
 
 
 def step_system_packages(ctx: Ctx):
@@ -565,7 +603,7 @@ def step_qlog_ion2g(ctx: Ctx):
     ion2g_url = "https://ion2g.app/software/ion2g-0.9.8.8-win64.zip"
     ion2g_sha256 = "0a358f0124d038b4ee50e124a52801b2067e9515eed7f2b65985e9425e4965af"
     temp_zip = Path("/tmp/ion2g.zip")
-    ion2g_install_dir = ctx.home / "EMCOMM_Apps" / "ion2G"
+    ion2g_install_dir = ctx.home / APPS_DIR_NAME / "ion2G"
 
     with ctx.spin("Downloading ion2G package..."):
         ctx.download(ion2g_url, temp_zip)
@@ -578,14 +616,14 @@ def step_qlog_ion2g(ctx: Ctx):
             # -o: overwrite without prompting — safe to re-run this step
             # (e.g. while testing) against a directory from a prior run.
             ctx.run(["unzip", "-q", "-o", str(temp_zip), "-d", str(ion2g_install_dir)])
-        (ctx.home / ".emcomm").mkdir(parents=True, exist_ok=True)
+        (ctx.home / STATE_DIR_NAME).mkdir(parents=True, exist_ok=True)
         ion2g_exe = next(
             (p for p in ion2g_install_dir.rglob("*")
              if p.is_file() and p.name.lower() == "ion2g.exe"),
             None,
         )
         if ion2g_exe:
-            (ctx.home / ".emcomm" / "ion2g_exe_path").write_text(str(ion2g_exe) + "\n")
+            (ctx.home / STATE_DIR_NAME / "ion2g_exe_path").write_text(str(ion2g_exe) + "\n")
             ctx.log(f"[+] ion2G executable located at: {ion2g_exe}", "ok")
         else:
             ctx.log("[!] Warning: ion2g.exe not found after extraction!", "err")
@@ -644,10 +682,10 @@ def step_docs_server(ctx: Ctx):
     else:
         ctx.log("[!] Error: docs/ directory not found — running outside the cloned repo?", "err")
 
-    docs_server_unit = ctx.home / ".config" / "systemd" / "user" / "emcomm-docs-server.service"
+    docs_server_unit = ctx.home / ".config" / "systemd" / "user" / DOCS_SERVER_UNIT
     docs_server_unit.parent.mkdir(parents=True, exist_ok=True)
     docs_server_unit.write_text(f"""[Unit]
-Description=EMCOMM Local Document Server (PDF Manuals, loopback only)
+Description={OPERATOR_PREFIX} Local Document Server (PDF Manuals, loopback only)
 After=network.target
 
 [Service]
@@ -660,8 +698,8 @@ Restart=on-failure
 WantedBy=default.target
 """)
     ctx.run(["systemctl", "--user", "daemon-reload"])
-    ctx.run(["systemctl", "--user", "enable", "emcomm-docs-server.service"])
-    ctx.run(["systemctl", "--user", "start", "emcomm-docs-server.service"])
+    ctx.run(["systemctl", "--user", "enable", DOCS_SERVER_UNIT])
+    ctx.run(["systemctl", "--user", "start", DOCS_SERVER_UNIT])
     ctx.log("[+] Document server enabled — http://127.0.0.1:8085", "ok")
 
 
@@ -720,7 +758,7 @@ def step_config_profiles(ctx: Ctx):
   <Title>Topographic (Offline)</Title>
   <Script><![CDATA[(
   function createPath(z, x, y) {{
-      return "file://{ctx.home}/EMCOMM_Data/Offline_Maps/Offline_Tiles/Topo/" + z + "/" + x + "/" + y + ".png";
+      return "file://{ctx.data_dir}/Offline_Maps/Offline_Tiles/Topo/" + z + "/" + x + "/" + y + ".png";
   }}
   )]]></Script>
 </Layer>
@@ -732,7 +770,7 @@ def step_config_profiles(ctx: Ctx):
   <Title>Satellite Imagery (Offline)</Title>
   <Script><![CDATA[(
   function createPath(z, x, y) {{
-      return "file://{ctx.home}/EMCOMM_Data/Offline_Maps/Offline_Tiles/Satellite/" + z + "/" + x + "/" + y + ".png";
+      return "file://{ctx.data_dir}/Offline_Maps/Offline_Tiles/Satellite/" + z + "/" + x + "/" + y + ".png";
   }}
   )]]></Script>
 </Layer>
@@ -760,20 +798,24 @@ def step_config_profiles(ctx: Ctx):
 def step_dock_trigger(ctx: Ctx):
     local_bin = ctx.home / ".local" / "bin"
     local_bin.mkdir(parents=True, exist_ok=True)
-    autostart_script = local_bin / "emcomm_autostart_sequence.sh"
-    autostart_script.write_text(AUTOSTART_SEQUENCE_SH)
+    autostart_script = local_bin / AUTOSTART_SCRIPT
+    autostart_script.write_text(
+        AUTOSTART_SEQUENCE_SH
+        .replace("@STATE_DIR@", STATE_DIR_NAME)
+        .replace("@UNIT_PREFIX@", UNIT_PREFIX)
+        .replace("@OPERATOR_PREFIX@", OPERATOR_PREFIX))
     autostart_script.chmod(0o755)
     ctx.log("[+] Autostart launcher installed.", "ok")
 
     systemd_user = ctx.home / ".config" / "systemd" / "user"
     systemd_user.mkdir(parents=True, exist_ok=True)
-    (systemd_user / "emcomm-autostart.service").write_text(f"""[Unit]
-Description=EMCOMM Sequenced Launch on Dock Event
+    (systemd_user / AUTOSTART_UNIT).write_text(f"""[Unit]
+Description={OPERATOR_PREFIX} Sequenced Launch on Dock Event
 After=graphical-session.target network.target
 
 [Service]
 Type=oneshot
-ExecStart={ctx.home}/.local/bin/emcomm_autostart_sequence.sh
+ExecStart={ctx.home}/.local/bin/{AUTOSTART_SCRIPT}
 Environment=DISPLAY=:0
 Environment=XAUTHORITY={ctx.home}/.Xauthority
 
@@ -781,7 +823,7 @@ Environment=XAUTHORITY={ctx.home}/.Xauthority
 WantedBy=default.target
 """)
     ctx.run(["systemctl", "--user", "daemon-reload"])
-    ctx.run(["systemctl", "--user", "enable", "emcomm-autostart.service"])
+    ctx.run(["systemctl", "--user", "enable", AUTOSTART_UNIT])
     ctx.log("[+] systemd user service installed and enabled.", "ok")
 
     dispatcher = f"""#!/bin/bash
@@ -789,19 +831,19 @@ ACTUAL_USER="{ctx.user}"
 USER_UID=$(id -u "$ACTUAL_USER" 2>/dev/null)
 
 if [ -z "$USER_UID" ]; then
-    logger "EMCOMM: could not resolve UID for $ACTUAL_USER, aborting dock event"
+    logger "{OPERATOR_PREFIX}: could not resolve UID for $ACTUAL_USER, aborting dock event"
     exit 1
 fi
 
-runuser -l "$ACTUAL_USER" -c "XDG_RUNTIME_DIR=/run/user/$USER_UID systemctl --user start emcomm-autostart.service"
-logger "EMCOMM: dock event dispatched to user session (uid $USER_UID)"
+runuser -l "$ACTUAL_USER" -c "XDG_RUNTIME_DIR=/run/user/$USER_UID systemctl --user start {AUTOSTART_UNIT}"
+logger "{OPERATOR_PREFIX}: dock event dispatched to user session (uid $USER_UID)"
 """
-    ctx.sudo_write("/usr/local/bin/emcomm-dock-event.sh", dispatcher, mode="+x")
+    ctx.sudo_write(DOCK_EVENT_SH, dispatcher, mode="+x")
     ctx.log("[+] Dock-event dispatcher installed.", "ok")
 
     udev_rule = (
         'ACTION=="add", SUBSYSTEM=="usb", ATTR{idVendor}=="05e3", '
-        'ATTR{idProduct}=="0610", RUN+="/usr/local/bin/emcomm-dock-event.sh"\n'
+        'ATTR{idProduct}=="0610", RUN+="' + DOCK_EVENT_SH + '"\n'
     )
     ctx.sudo_write("/etc/udev/rules.d/99-dock-trigger.rules", udev_rule)
     ctx.sudo("udevadm", "control", "--reload-rules")
@@ -821,7 +863,7 @@ def optional_direwolf(ctx: Ctx):
         direwolf_config_dir = ctx.home / ".config" / "direwolf"
         direwolf_config_dir.mkdir(parents=True, exist_ok=True)
 
-        (direwolf_config_dir / "direwolf.conf").write_text(f"""# --- EMCOMM Direwolf Base Config ---
+        (direwolf_config_dir / "direwolf.conf").write_text(f"""# --- {OPERATOR_PREFIX} Direwolf Base Config ---
 # Callsign pulled from Node ID set during provisioning.
 # WARNING: transmitting AX.25/APRS traffic requires a valid, licensed
 # amateur radio callsign. Do NOT transmit under this value unless it
@@ -857,7 +899,7 @@ def optional_meshtastic(ctx: Ctx):
     # Noble enforces PEP 668 (externally-managed environment), so a bare
     # 'pip install' is refused. Use an isolated venv rather than
     # --break-system-packages, to avoid touching system Python packages.
-    meshtastic_venv = ctx.home / "EMCOMM_Apps" / "meshtastic-venv"
+    meshtastic_venv = ctx.home / APPS_DIR_NAME / "meshtastic-venv"
     meshtastic_bin = meshtastic_venv / "bin" / "meshtastic"
     ok = False
 
@@ -939,7 +981,7 @@ def optional_satdump(ctx: Ctx):
                     break
             ctx.sudo("apt", "install", "-y", "libnng-dev", check=False)
 
-        satdump_dir = ctx.home / "EMCOMM_Apps" / "SatDump"
+        satdump_dir = ctx.home / APPS_DIR_NAME / "SatDump"
         if not satdump_dir.is_dir():
             with ctx.spin("Cloning SatDump source..."):
                 ctx.run(["git", "clone", "https://github.com/SatDump/SatDump.git", str(satdump_dir)])
@@ -986,7 +1028,7 @@ def optional_satdump(ctx: Ctx):
 
         satdump_global_cfg = Path("/usr/share/satdump/satdump_cfg.json")
         if satdump_global_cfg.is_file():
-            ctx.sudo("cp", str(satdump_global_cfg), f"{satdump_global_cfg}.emcomm-backup")
+            ctx.sudo("cp", str(satdump_global_cfg), f"{satdump_global_cfg}.{PROJECT}-backup")
             text = satdump_global_cfg.read_text()
             text = re.sub(
                 r'^( *)("http://celestrak\.org/NORAD/elements/gp\.php\?GROUP=active&FORMAT=tle")',
@@ -994,7 +1036,7 @@ def optional_satdump(ctx: Ctx):
             text = re.sub(r"^( *)29499,", r"\1// 29499,", text, flags=re.MULTILINE)
             text = re.sub(r"^( *)35865 ", r"\1// 35865 ", text, flags=re.MULTILINE)
             ctx.sudo_write(str(satdump_global_cfg), text)
-            ctx.log(f"[+] Disabled SatDump global bulk TLE fetch (backup: {satdump_global_cfg}.emcomm-backup).", "ok")
+            ctx.log(f"[+] Disabled SatDump global bulk TLE fetch (backup: {satdump_global_cfg}.{PROJECT}-backup).", "ok")
         else:
             ctx.log(f"[!] SatDump global config not found at {satdump_global_cfg} — bulk TLE fetch NOT disabled.", "warn")
 
@@ -1033,7 +1075,7 @@ def finalize(ctx: Ctx):
     else:
         ctx.log("[!] QLog Flatpak desktop file not found — shortcut skipped.", "warn")
 
-    ion2g_exe_path_file = ctx.home / ".emcomm" / "ion2g_exe_path"
+    ion2g_exe_path_file = ctx.home / STATE_DIR_NAME / "ion2g_exe_path"
     ion2g_exe_path = ion2g_exe_path_file.read_text().strip() if ion2g_exe_path_file.is_file() else ""
     if ion2g_exe_path:
         ion2g_desktop = desktop_dir / "ion2G.desktop"
@@ -1056,20 +1098,6 @@ Categories=Network;
         ctx.run(["gio", "set", "--type=string", str(f), "metadata::xfce-exe-checksum", checksum], check=False)
         f.touch()
 
-    wallpaper_src = Path("scripts/Packages/Desktop Images/wallpaper.jpg")
-    wallpaper_dest = ctx.home / ".emcomm" / "wallpaper.jpg"
-    if wallpaper_src.is_file():
-        (ctx.home / ".emcomm").mkdir(parents=True, exist_ok=True)
-        shutil.copy(wallpaper_src, wallpaper_dest)
-        r = subprocess.run(["xfconf-query", "-c", "xfce4-desktop", "-l"],
-                            capture_output=True, text=True, check=False)
-        for prop in r.stdout.splitlines():
-            if "last-image" in prop:
-                ctx.run(["xfconf-query", "-c", "xfce4-desktop", "-p", prop, "-s", str(wallpaper_dest)])
-        ctx.log("[+] Desktop wallpaper set.", "ok")
-    else:
-        ctx.log(f"[!] Wallpaper source not found at {wallpaper_src} — skipped.", "warn")
-
 
 @dataclass(frozen=True)
 class Component:
@@ -1082,7 +1110,7 @@ class Component:
 # all unchecked by default — check only what you're testing. "Select All"
 # reproduces a full, real run equivalent to deploy_emcomm_node.sh end to end.
 COMPONENTS: list[Component] = [
-    Component("sudoers_node_id", "Sudo config + write callsign / node ID (/etc/emcomm)", step_sudoers_and_node_id),
+    Component("sudoers_node_id", f"Sudo config + write callsign / node ID ({SYSTEM_DIR})", step_sudoers_and_node_id),
     Component("system_packages", "System packages (apt purge/update/upgrade + core list, Wine init) — SLOW", step_system_packages),
     Component("slim_appliance", "Remove preinstalled extras + disable auto-updates (appliance build)", optional_slim_appliance),
     Component("qlog_ion2g", "QLog station log + ion2G HF ALE (download & extract)", step_qlog_ion2g),
@@ -1094,7 +1122,7 @@ COMPONENTS: list[Component] = [
     Component("direwolf", "Direwolf (AX.25 / APRS software TNC)", optional_direwolf),
     Component("meshtastic", "Meshtastic CLI (LoRa mesh node tooling)", optional_meshtastic),
     Component("satdump", "SatDump (weather satellite imagery via RTL-SDR) — SLOW", optional_satdump),
-    Component("desktop_shortcuts", "Desktop shortcuts + wallpaper", finalize),
+    Component("desktop_shortcuts", "Desktop shortcuts", finalize),
 ]
 
 
@@ -1115,7 +1143,7 @@ class ProvisionerGUI(tk.Tk):
 
     def __init__(self):
         super().__init__()
-        self.title("EMCOMM Field Node Provisioner")
+        self.title(f"{OPERATOR_PREFIX} Field Node Provisioner")
         self.geometry("820x700")
         self.minsize(700, 560)
 
@@ -1201,7 +1229,7 @@ class ProvisionerGUI(tk.Tk):
         self.options_frame = ttk.Frame(self, padding=16)
         self.options_frame.pack(fill="both", expand=True)
 
-        ttk.Label(self.options_frame, text="EMCOMM Field Node Provisioner",
+        ttk.Label(self.options_frame, text=f"{OPERATOR_PREFIX} Field Node Provisioner",
                   font=("TkDefaultFont", 14, "bold")).pack(anchor="w")
         ttk.Label(self.options_frame,
                   text="Builds an offline-capable emergency communications workstation. "

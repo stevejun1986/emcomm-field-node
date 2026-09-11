@@ -27,7 +27,7 @@ Two components are environment-specific rather than hardware-specific:
 * The dock-trigger udev rule is keyed to a **placeholder** USB vendor/product ID.
   If you use it, find your own dock's IDs with `udevadm monitor --environment --udev`
   and update `99-dock-trigger.rules`. Skip the step entirely if you have no dock.
-* Wallpaper and desktop-shortcut trust use XFCE mechanisms (`xfconf`,
+* Desktop-shortcut trust uses XFCE mechanisms (`xfconf`,
   `metadata::xfce-exe-checksum`). Another desktop environment needs different handling.
 
 ---
@@ -47,7 +47,7 @@ Installed and configured by the provisioner:
   `127.0.0.1:8085` for the PDF reference library
 * **Weather satellite imagery:** SatDump (via RTL-SDR)
 * **Automation:** optional dock-triggered autostart (udev + systemd), desktop
-  shortcuts, wallpaper
+  shortcuts
 
 Every one of these is an independently checkable step. Nothing is mandatory.
 
@@ -68,7 +68,7 @@ configs/ale_channels.zcp     ion2G HF ALE channel plan
 configs/satdump_tles.txt     Curated TLE set for SatDump
 scripts/fetch_map_tiles.py   Offline map tile fetcher for YOUR operating area
 docs/*.pdf                   Reference library, served over loopback
-scripts/Packages/            Locally cached .deb packages, wallpaper image
+scripts/Packages/            Locally cached .deb packages
 ```
 
 ### Profile placeholders — read this before shipping a profile

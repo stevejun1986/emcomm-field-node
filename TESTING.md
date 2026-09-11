@@ -25,7 +25,7 @@ before an hour of package installation.
 | --- | --- | --- |
 | 1 | Sudo config + callsign | `/etc/emcomm/node.conf` written; sudoers file is mode 0440 |
 | 2 | App profiles | Placeholders substituted — see the check below |
-| 3 | Desktop shortcuts + wallpaper | Missing `.desktop` files warn rather than fail |
+| 3 | Desktop shortcuts | Missing `.desktop` files warn rather than fail |
 | 4 | Reference library + doc server | `curl -sI http://127.0.0.1:8085` returns 200 |
 | 5 | Map tiles | Run `--estimate-only` first; the count is easy to get wrong |
 | 6 | System packages | Slow. Confirm no interactive prompt stalls it |
