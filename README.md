@@ -148,3 +148,38 @@ not a licence.
 Amateur radio may not be used for communications in which the operator has a
 pecuniary interest, and traffic must be sent in the clear so it can be understood
 by anyone monitoring. Plan nets accordingly: assume everything you send is public.
+
+---
+
+## Licence
+
+This package is free software, licensed under the **GNU General Public License,
+version 3 or (at your option) any later version**. The full text is in
+[`LICENSE`](LICENSE).
+
+    Copyright (C) 2026  WSNQ705
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+
+In practice, for an emergency-communications tool: use it, run it on as many
+nodes as you like, change it to suit your group. If you distribute a modified
+version, pass on the source under the same terms so the next group gets the same
+freedom — including whatever you fixed in the field.
+
+### What this licence covers
+
+The provisioner, the tile fetcher, the configuration templates and the
+documentation written for this repository.
+
+It does **not** cover third-party material that a deployment pulls in or that is
+later added to this tree. Reference manuals, map tiles, ZIM archives, `.deb`
+packages and radio codeplugs each carry their own terms, set by whoever
+published them. `docs/` and `scripts/Packages/` are intentionally empty here for
+that reason. **Before committing a third-party document into this repository,
+check that its licence permits redistribution** — and record that licence
+alongside it.
+
+Nothing in this licence is a licence to transmit. See the regulatory section
+above.
