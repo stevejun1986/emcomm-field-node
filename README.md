@@ -90,6 +90,14 @@ The callsign / node ID also becomes the machine's **system hostname**, with the
 matching `/etc/hosts` entry, so a fleet built by cloning one master image does not
 end up with every node answering to the same name.
 
+If the map step is selected, a sixth screen — **Operating Area** — appears before
+the credential prompt. It takes a centre point in decimal degrees and a radius
+(50, 75 or 150 miles), shows the tile count, size and time **before** anything
+downloads, and writes the area file. Tiles are tiered: full street detail within
+25 miles, orientation zoom to the full radius. Coverage scales with the square of
+the radius, so a flat 150-mile fetch at street zoom would be roughly 694,000 tiles
+against a public USGS endpoint.
+
 ---
 
 ## What You Supply

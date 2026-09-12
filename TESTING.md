@@ -27,7 +27,7 @@ before an hour of package installation.
 | 2 | App profiles + ALE channel plan | Placeholders substituted — see the check below |
 | 3 | Desktop shortcuts | Missing `.desktop` files warn rather than fail |
 | 4 | Reference library + doc server | `curl -sI http://127.0.0.1:8085` returns 200 |
-| 5 | Offline map tiles | Needs a `configs/areas/<your-area>.json` (copy `example-area.json.sample`), or the step correctly refuses. Run the fetcher with `--estimate-only` first; the count is easy to get wrong |
+| 5 | Offline map tiles | Selecting it adds the **Operating Area** screen before the sudo prompt — check the estimate there before committing. Without an area file the step correctly refuses. Run the fetcher with `--estimate-only` first; the count is easy to get wrong |
 | 6 | System packages + Wine init | Slowest step. Confirm no interactive prompt stalls it |
 | 7 | QLog station log + ion2G HF ALE | Checksum must verify; re-run to confirm it is idempotent |
 | 8 | Offline knowledgebase | Large download; the pinned URL will eventually rotate |
@@ -85,6 +85,8 @@ machine, since several failures only appear on a second run.
 ```bash
 python3 tests/dryrun.py     # every step, nothing installed
 python3 tests/flow.py       # the five screens and verification wiring
+python3 tests/area.py       # centre/radius input, the estimate, the file it writes
+python3 tests/throttle.py   # pacing, backoff, and behaviour when rate-limited
 ```
 
 `tests/flow.py` needs Tk (`sudo apt install python3-tk`) and a display. On a

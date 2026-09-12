@@ -70,6 +70,58 @@ The map tile step reads **every `areas/*.json`** and fetches each layer for each
 area. Define at least one or the step fetches nothing and says so — it will not
 silently produce an empty map.
 
+When the map step is selected, the provisioner shows an **Operating Area** screen
+that takes a centre point and a radius, shows the download estimate before
+committing, and writes the area file for you. Hand-writing one is still supported.
+
+### Centre and radius, and why tiles are tiered
+
+An area with a `center` and `radius_miles` is fetched in two passes: full street
+detail within `detail_radius_miles` (25 by default), and orientation zoom out to
+the full radius. That is not a cosmetic choice. Coverage scales with the square of
+the radius, so fetching everything at street zoom costs roughly:
+
+| Radius | Flat, street zoom | Tiered |
+| --- | --- | --- |
+| 50 mi | ~78,000 tiles | ~21,000 |
+| 75 mi | ~174,000 tiles | ~23,000 |
+| 150 mi | ~694,000 tiles | ~31,000 |
+
+Both layers, mid-latitude. The flat 150-mile figure is a multi-hour download of
+several gigabytes against a public USGS endpoint — which is why the radius alone
+does not set the zoom.
+
+```json
+{
+  "center": { "lat": 39.00, "lon": -77.00 },
+  "radius_miles": 75,
+  "detail_radius_miles": 25,
+  "north": 40.086957, "south": 37.913043,
+  "east": -75.604826, "west": -78.395174
+}
+```
+
+The bounding box is the outer ring, kept so the fetcher can still be pointed at
+the file directly with `--area`. A file with only `north/south/east/west` is a
+plain rectangle and gets a single full-detail pass.
+
+### Being a good neighbour to the tile service
+
+The tiles come from a public USGS endpoint. The fetcher paces **every** request
+(`--delay`, default 0.15s), pauses between bursts (`--burst 100 --pause 5`), and
+backs off exponentially on 429/503 — honouring `Retry-After` when the server
+sends one. After ten consecutive throttle responses it **stops** and tells you,
+rather than grinding out thousands of failures against a service that has
+repeatedly said no.
+
+Everything already fetched is kept, so re-running fills the gaps. If it keeps
+happening, be gentler:
+
+```bash
+./scripts/fetch_map_tiles.py --area configs/areas/your-area.json \
+    --delay 0.5 --burst 50 --pause 30
+```
+
 `example-area.json.sample` is a sample around Washington DC, deliberately chosen
 as a neutral public reference. **Copy it to `<your-area>.json` and edit the copy** —
 do not edit the sample in place. It carries the `.sample` suffix so it is never

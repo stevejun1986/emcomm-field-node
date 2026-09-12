@@ -44,6 +44,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import random
 import sys
 import time
 import urllib.error
@@ -51,17 +52,21 @@ import urllib.request
 from pathlib import Path
 
 # name -> (url template, description)
+# basemap.nationalmap.gov is case-sensitive on the /ArcGIS/ path segment.
+# The S.T.N.D. fetcher carries this as a hard-won note from a real run; this
+# script had it lowercase, which would fail every request before throttling
+# ever became the question.
 SOURCES = {
     "topo": (
-        "https://basemap.nationalmap.gov/arcgis/rest/services/USGSTopo/MapServer/tile/{z}/{y}/{x}",
+        "https://basemap.nationalmap.gov/ArcGIS/rest/services/USGSTopo/MapServer/tile/{z}/{y}/{x}",
         "USGS topographic basemap (public domain)",
     ),
     "imagery": (
-        "https://basemap.nationalmap.gov/arcgis/rest/services/USGSImageryOnly/MapServer/tile/{z}/{y}/{x}",
+        "https://basemap.nationalmap.gov/ArcGIS/rest/services/USGSImageryOnly/MapServer/tile/{z}/{y}/{x}",
         "USGS aerial imagery (public domain)",
     ),
     "relief": (
-        "https://basemap.nationalmap.gov/arcgis/rest/services/USGSShadedReliefOnly/MapServer/tile/{z}/{y}/{x}",
+        "https://basemap.nationalmap.gov/ArcGIS/rest/services/USGSShadedReliefOnly/MapServer/tile/{z}/{y}/{x}",
         "USGS shaded relief (public domain)",
     ),
 }
@@ -72,6 +77,45 @@ OPERATOR_PREFIX = "EMCOMM"
 DATA_DIR_NAME = OPERATOR_PREFIX + "_Data"
 
 DEFAULT_UA = OPERATOR_PREFIX + "-Field-Node-TileFetcher/1.0 (set --user-agent with a contact address)"
+
+
+# Degrees per mile. Latitude is near enough constant; longitude narrows with
+# the cosine of the latitude, which is why a radius in miles is not a fixed
+# number of degrees and why a box near the poles is much wider than one at the
+# equator for the same radius.
+MILES_PER_DEG_LAT = 69.0
+MILES_PER_DEG_LON_EQUATOR = 69.172
+
+# Web Mercator cannot represent beyond about +/-85 degrees.
+MAX_LAT = 85.0
+
+DETAIL_RADIUS_MILES = 25      # inner ring kept at full zoom
+DETAIL_ZOOMS = (10, 15)       # street / trail level
+OVERVIEW_ZOOMS = (10, 12)     # orientation level
+
+
+def box_from_center(lat: float, lon: float, radius_miles: float) -> dict:
+    """A bounding box `radius_miles` around a centre point.
+
+    Clamped to the Web Mercator latitude limit and to +/-180 longitude, so a
+    centre near a pole or near the antimeridian yields a valid box rather than
+    one the fetcher will reject. Near the poles cos(lat) collapses and the
+    longitude span would otherwise run away.
+    """
+    # Clamp the CENTRE first. Clamping only the edges of a box drawn around a
+    # centre beyond the Mercator limit yields south > north — a box the fetcher
+    # correctly refuses — so a centre at 89N is treated as one at 85N.
+    lat = max(-MAX_LAT, min(MAX_LAT, lat))
+    lon = max(-180.0, min(180.0, lon))
+    dlat = radius_miles / MILES_PER_DEG_LAT
+    cos_lat = math.cos(math.radians(lat))
+    dlon = radius_miles / (MILES_PER_DEG_LON_EQUATOR * max(cos_lat, 0.01))
+    return {
+        "north": round(min(MAX_LAT, lat + dlat), 6),
+        "south": round(max(-MAX_LAT, lat - dlat), 6),
+        "east":  round(min(180.0, lon + dlon), 6),
+        "west":  round(max(-180.0, lon - dlon), 6),
+    }
 
 
 def deg2num(lat_deg: float, lon_deg: float, zoom: int) -> tuple[int, int]:
@@ -113,23 +157,65 @@ def validate_area(area: dict) -> dict:
     return area
 
 
-def fetch(url: str, dest: Path, ua: str, timeout: int) -> str:
-    """Returns 'ok', 'skip' (already present) or 'fail'."""
+# Statuses a tile server uses to say "slow down" rather than "no such tile".
+THROTTLE_CODES = {429, 500, 502, 503, 504}
+MAX_ATTEMPTS = 4
+MAX_BACKOFF = 60.0
+
+
+def _retry_after(err, attempt: int) -> float:
+    """How long to wait before retrying, honouring Retry-After when the server
+    sends one and falling back to exponential backoff with jitter. Jitter
+    matters: without it every client that started together retries together."""
+    header = getattr(err, "headers", None)
+    if header is not None:
+        raw = header.get("Retry-After")
+        if raw:
+            try:
+                return min(float(raw), MAX_BACKOFF)
+            except ValueError:
+                pass            # HTTP-date form; fall through to backoff
+    return min(MAX_BACKOFF, (2 ** attempt) + random.uniform(0, 1))
+
+
+def fetch(url: str, dest: Path, ua: str, timeout: int, delay: float) -> str:
+    """Returns 'ok', 'skip' (already present), 'missing' (404 — the tile simply
+    does not exist, which is normal at the edges of a pyramid), 'throttled'
+    (the server asked us to back off and kept asking), or 'fail'.
+
+    The delay is applied before EVERY attempt, including retries. The previous
+    version slept only after a success, so the moment anything started failing
+    the loop stopped pacing and hammered the endpoint as fast as it could spin
+    — precisely when it had been asked to stop.
+    """
     if dest.exists() and dest.stat().st_size > 0:
         return "skip"
     req = urllib.request.Request(url, headers={"User-Agent": ua})
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as r:
-            data = r.read()
-    except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, OSError):
-        return "fail"
-    if not data:
-        return "fail"
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    tmp = dest.with_suffix(dest.suffix + ".part")
-    tmp.write_bytes(data)
-    tmp.replace(dest)          # atomic: a killed run never leaves a truncated tile
-    return "ok"
+    for attempt in range(MAX_ATTEMPTS):
+        time.sleep(delay)
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                data = r.read()
+        except urllib.error.HTTPError as e:
+            if e.code == 404:
+                return "missing"
+            if e.code in THROTTLE_CODES and attempt < MAX_ATTEMPTS - 1:
+                time.sleep(_retry_after(e, attempt))
+                continue
+            return "throttled" if e.code in THROTTLE_CODES else "fail"
+        except (urllib.error.URLError, TimeoutError, OSError):
+            if attempt < MAX_ATTEMPTS - 1:
+                time.sleep(_retry_after(None, attempt))
+                continue
+            return "fail"
+        if not data:
+            return "fail"
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        tmp = dest.with_suffix(dest.suffix + ".part")
+        tmp.write_bytes(data)
+        tmp.replace(dest)      # atomic: a killed run never leaves a truncated tile
+        return "ok"
+    return "fail"
 
 
 def main() -> int:
@@ -139,6 +225,10 @@ def main() -> int:
         epilog="Sources:\n" + "\n".join(f"  {k:9s} {v[1]}" for k, v in SOURCES.items()),
     )
     ap.add_argument("--area", type=Path, help="JSON file with north/south/east/west")
+    ap.add_argument("--center-lat", type=float,
+                    help="centre latitude; with --center-lon and --radius-miles")
+    ap.add_argument("--center-lon", type=float)
+    ap.add_argument("--radius-miles", type=float)
     ap.add_argument("--north", type=float)
     ap.add_argument("--south", type=float)
     ap.add_argument("--east", type=float)
@@ -148,7 +238,11 @@ def main() -> int:
     ap.add_argument("--max-zoom", type=int, default=15)
     ap.add_argument("--out", type=Path,
                     default=Path.home() / DATA_DIR_NAME / "Offline_Maps" / "Offline_Tiles")
-    ap.add_argument("--delay", type=float, default=0.1,
+    ap.add_argument("--burst", type=int, default=100,
+                    help="requests between pauses; 0 disables bursting")
+    ap.add_argument("--pause", type=float, default=5.0,
+                    help="seconds to pause between bursts")
+    ap.add_argument("--delay", type=float, default=0.15,
                     help="seconds between requests; be polite to the tile server (default 0.1)")
     ap.add_argument("--timeout", type=int, default=30)
     ap.add_argument("--user-agent", default=DEFAULT_UA)
@@ -161,11 +255,17 @@ def main() -> int:
         if not args.area.is_file():
             sys.exit(f"error: no such area file: {args.area}")
         area = validate_area(json.loads(args.area.read_text()))
+    elif None not in (args.center_lat, args.center_lon, args.radius_miles):
+        if args.radius_miles <= 0:
+            sys.exit("error: --radius-miles must be positive")
+        area = validate_area(box_from_center(args.center_lat, args.center_lon,
+                                             args.radius_miles))
     elif None not in (args.north, args.south, args.east, args.west):
         area = validate_area({"north": args.north, "south": args.south,
                               "east": args.east, "west": args.west})
     else:
-        ap.error("supply --area FILE, or all four of --north --south --east --west")
+        ap.error("supply --area FILE, or --center-lat/--center-lon/--radius-miles, "
+                 "or all four of --north --south --east --west")
 
     if args.min_zoom > args.max_zoom:
         sys.exit("error: --min-zoom cannot exceed --max-zoom")
@@ -195,33 +295,76 @@ def main() -> int:
             return 1
 
     url_tmpl = SOURCES[args.layer][0]
-    ok = skip = fail = 0
+    ok = skip = missing = fail = throttled = 0
+    consecutive_throttles = 0
+    requested = 0                 # network requests since the last burst pause
     started = time.time()
+    aborted = False
     try:
         for z in zooms:
+            if aborted:
+                break
             x0, x1, y0, y1 = tile_range(area, z)
             for x in range(x0, x1 + 1):
+                if aborted:
+                    break
                 for y in range(y0, y1 + 1):
                     dest = args.out / args.layer / str(z) / str(x) / f"{y}.png"
                     result = fetch(url_tmpl.format(z=z, x=x, y=y), dest,
-                                   args.user_agent, args.timeout)
-                    if result == "ok":
-                        ok += 1
-                        time.sleep(args.delay)
-                    elif result == "skip":
+                                   args.user_agent, args.timeout, args.delay)
+                    if result == "skip":
                         skip += 1
                     else:
-                        fail += 1
-                    done = ok + skip + fail
+                        requested += 1
+                        if result == "ok":
+                            ok += 1
+                            consecutive_throttles = 0
+                        elif result == "missing":
+                            missing += 1
+                            consecutive_throttles = 0
+                        elif result == "throttled":
+                            throttled += 1
+                            consecutive_throttles += 1
+                        else:
+                            fail += 1
+                            consecutive_throttles = 0
+
+                    # Give up loudly. Grinding out thousands of failures against
+                    # a service that has repeatedly said no is worse than
+                    # stopping: the operator gets no map either way, and only
+                    # one of the two is a good neighbour.
+                    if consecutive_throttles >= 10:
+                        print(f"\n\nSTOPPED: {consecutive_throttles} consecutive throttle "
+                              f"responses from the tile service.")
+                        print("It is rate-limiting us. Wait, then re-run the same command —")
+                        print("tiles already fetched are kept and will be skipped.")
+                        print("Consider --delay 0.5 --burst 50 --pause 30 to be gentler.")
+                        aborted = True
+                        break
+
+                    # Burst pacing: a pause lets a window-based limiter reset,
+                    # which a uniform trickle never gives it a chance to do.
+                    if args.burst and requested >= args.burst:
+                        requested = 0
+                        time.sleep(args.pause)
+
+                    done = ok + skip + missing + fail + throttled
                     if done % 100 == 0 or done == total:
                         pct = done * 100 // max(total, 1)
-                        print(f"\r  z{z}  {done:,}/{total:,} ({pct}%)  "
-                              f"ok={ok:,} cached={skip:,} failed={fail:,}", end="", flush=True)
+                        print(f"\r  z{z}  {done:,}/{total:,} ({pct}%)  ok={ok:,} "
+                              f"cached={skip:,} missing={missing:,} failed={fail:,} "
+                              f"throttled={throttled:,}", end="", flush=True)
     except KeyboardInterrupt:
         print("\ninterrupted — re-run the same command to resume (existing tiles are kept)")
         return 1
 
-    print(f"\ndone in {time.time() - started:,.0f}s — {ok:,} fetched, {skip:,} already present, {fail:,} failed")
+    print(f"\ndone in {time.time() - started:,.0f}s — {ok:,} fetched, {skip:,} already "
+          f"present, {missing:,} absent upstream, {fail:,} failed, {throttled:,} throttled")
+    if throttled:
+        print("Some tiles were refused by rate limiting. Re-run to fill the gaps;")
+        print("raise --delay or --pause if it keeps happening.")
+    if aborted:
+        return 1
     if fail:
         print("Some tiles failed. Re-run to retry just those; existing tiles are skipped.")
         return 1

@@ -90,6 +90,7 @@ from __future__ import annotations
 
 import getpass
 import hashlib
+import importlib.util
 import json
 import os
 import queue
@@ -152,6 +153,58 @@ DOCK_EVENT_SH    = "/usr/local/bin/" + UNIT_PREFIX + "-dock-event.sh"
 # did: the .tms files pointed at Offline_Tiles/Topo/ and .../Satellite/ while
 # the fetcher wrote .../topo/ and .../imagery/, so QMapShack found nothing
 # even when tiles were present.
+TILE_FETCHER = Path("scripts/fetch_map_tiles.py")
+AREA_DIR = Path("configs/areas")
+
+
+def load_tile_fetcher():
+    """Import the tile fetcher so the estimate shown to the operator and the
+    tiering below use the SAME maths the download itself uses. A second
+    implementation of the tile arithmetic would drift from the first, and the
+    operator would be shown a number that is not what happens.
+
+    Returns None if the script is missing or unloadable; callers degrade rather
+    than crash.
+    """
+    try:
+        spec = importlib.util.spec_from_file_location("fetch_map_tiles", TILE_FETCHER)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+    except Exception:      # noqa: BLE001 — a broken fetcher must not stop the GUI
+        return None
+
+
+def fetch_passes(spec: dict, tf) -> list:
+    """[(description, bbox, (min_zoom, max_zoom))] for one operating area.
+
+    An area given as a centre and radius is fetched in two passes: full street
+    detail in the inner ring where a node actually navigates, and orientation
+    zoom out to the full radius. Fetching the whole radius at street zoom is
+    what turns a 150-mile area into a multi-hour, multi-gigabyte download —
+    roughly 350,000 tiles against a public USGS endpoint.
+
+    A hand-written rectangle has no centre, so it gets a single pass.
+    """
+    centre = spec.get("center") or {}
+    lat, lon, radius = centre.get("lat"), centre.get("lon"), spec.get("radius_miles")
+    if tf and lat is not None and lon is not None and radius:
+        detail_r = min(float(spec.get("detail_radius_miles", tf.DETAIL_RADIUS_MILES)),
+                       float(radius))
+        passes = [(f"detail {detail_r:g} mi",
+                   tf.box_from_center(float(lat), float(lon), detail_r), tf.DETAIL_ZOOMS)]
+        if float(radius) > detail_r:
+            passes.append((f"overview {float(radius):g} mi",
+                           tf.box_from_center(float(lat), float(lon), float(radius)),
+                           tf.OVERVIEW_ZOOMS))
+        return passes
+    try:
+        box = {k: float(spec[k]) for k in ("north", "south", "east", "west")}
+    except (KeyError, TypeError, ValueError):
+        return []
+    return [("area", box, tf.DETAIL_ZOOMS if tf else (10, 15))]
+
+
 MAP_LAYERS = (
     ("topo",    "Topo_Offline.tms",      "Topographic (Offline)"),
     ("imagery", "Satellite_Offline.tms", "Satellite Imagery (Offline)"),
@@ -731,51 +784,70 @@ def step_qlog_ion2g(ctx: Ctx):
 def step_maps_fetch(ctx: Ctx):
     tiles_dir = ctx.data_dir / "Offline_Maps" / "Offline_Tiles"
     tiles_dir.mkdir(parents=True, exist_ok=True)
-    fetch_script = Path("scripts/fetch_map_tiles.py")
-    if not fetch_script.is_file():
-        ctx.log("[!] Error: scripts/fetch_map_tiles.py not found in repo!", "err")
+    if not TILE_FETCHER.is_file():
+        ctx.log(f"[!] Error: {TILE_FETCHER} not found in repo!", "err")
         return
 
     # The fetcher refuses to guess an area: with no bounds it exits 2 before
-    # downloading anything. Invoked bare it therefore fetched nothing while
-    # the spinner still resolved green, so the area is resolved here and a
-    # missing one is reported rather than silently producing an empty map.
-    area_dir = Path("configs/areas")
-    # Any *.json here is an operating area. The sample ships as .json.sample
-    # precisely so that it is NOT one: the documented instruction is "copy it
-    # and edit", and a name-based exclusion meant an operator who edited the
-    # sample in place had their area silently ignored.
-    areas = sorted(area_dir.glob("*.json"))
+    # downloading anything. Invoked bare it therefore fetched nothing while the
+    # spinner still resolved green, so the area is resolved here and a missing
+    # one is reported rather than silently producing an empty map.
+    areas = sorted(AREA_DIR.glob("*.json"))
     if not areas:
         ctx.log(f"[!] No operating area defined. Copy "
-                f"{area_dir}/example-area.json.sample to {area_dir}/<your-area>.json, "
+                f"{AREA_DIR}/example-area.json.sample to {AREA_DIR}/<your-area>.json, "
                 f"set your own bounds, and re-run this step — no tiles fetched.", "warn")
         return
 
+    tf = load_tile_fetcher()
+    if tf is None:
+        ctx.log(f"[!] Could not load {TILE_FETCHER} as a module — falling back to a "
+                f"single full-detail pass per area. A large radius will be slow.", "warn")
+
     ok_count, fail_count = 0, 0
-    for area in areas:
+    for area_path in areas:
+        try:
+            spec = json.loads(area_path.read_text(errors="replace"))
+        except (OSError, ValueError) as e:
+            ctx.log(f"[!] {area_path} is not readable JSON ({e}) — skipped.", "err")
+            fail_count += 1
+            continue
+
+        passes = fetch_passes(spec, tf)
+        if not passes:
+            ctx.log(f"[!] {area_path} has neither a centre/radius nor all four of "
+                    f"north/south/east/west — skipped.", "err")
+            fail_count += 1
+            continue
+
         for layer, _tms, _title in MAP_LAYERS:
-            rc = 1
-            with ctx.spin(f"Fetching {layer} tiles for {area.stem}...") as result:
-                # --yes because there is no terminal to answer the size prompt;
-                # stdin is DEVNULL, so the confirmation would raise EOFError.
-                rc = ctx.run([sys.executable, str(fetch_script),
-                              "--area", str(area), "--layer", layer,
-                              "--out", str(tiles_dir), "--yes"],
-                             check=False).returncode
-                result.ok = (rc == 0)
-            if rc == 0:
-                ok_count += 1
-            else:
-                fail_count += 1
-                ctx.log(f"[!] Tile fetch failed for {area.stem} / {layer} (exit {rc}).", "err")
+            for desc, box, (zmin, zmax) in passes:
+                rc = 1
+                with ctx.spin(f"Fetching {layer} tiles, {desc}, for {area_path.stem}..."):
+                    # Explicit bounds rather than re-deriving them in the child,
+                    # and --yes because stdin is DEVNULL: the size confirmation
+                    # would otherwise raise EOFError.
+                    rc = ctx.run([sys.executable, str(TILE_FETCHER),
+                                  "--north", str(box["north"]), "--south", str(box["south"]),
+                                  "--east", str(box["east"]), "--west", str(box["west"]),
+                                  "--layer", layer,
+                                  "--min-zoom", str(zmin), "--max-zoom", str(zmax),
+                                  "--out", str(tiles_dir), "--yes"],
+                                 check=False).returncode
+                if rc == 0:
+                    ok_count += 1
+                else:
+                    fail_count += 1
+                    ctx.log(f"[!] Tile fetch failed: {area_path.stem} / {layer} / "
+                            f"{desc} (exit {rc}).", "err")
 
     if ok_count and not fail_count:
-        ctx.log(f"[+] Tiles fetched for {ok_count} area/layer combination(s).", "ok")
+        ctx.log(f"[+] Tiles fetched — {ok_count} pass(es) completed.", "ok")
     elif ok_count:
-        ctx.log(f"[!] Tiles fetched for {ok_count}, failed for {fail_count} — see errors above.", "warn")
+        ctx.log(f"[!] {ok_count} pass(es) completed, {fail_count} failed — "
+                f"see errors above.", "warn")
     else:
-        ctx.log("[!] No tiles fetched — every fetch failed.", "err")
+        ctx.log("[!] No tiles fetched — every pass failed.", "err")
 
 
 def step_kiwix_zim(ctx: Ctx):
@@ -1623,6 +1695,7 @@ class ProvisionerGUI(tk.Tk):
         self.selected_ids: set = set()
         self.check_results: list = []
         self.run_outcome: str = "unknown"     # completed | failed | cancelled
+        self.area_file = None                 # written by the area screen, if shown
 
         self._build_options_screen()
         self._show("options")
@@ -1781,7 +1854,147 @@ class ProvisionerGUI(tk.Tk):
         for var in self.component_vars.values():
             var.set(False)
 
-    # -- screen 2: sudo credentials ---------------------------------------
+    # -- screen 2 (conditional): operating area ---------------------------
+    def _build_area_screen(self):
+        f = ttk.Frame(self, padding=16)
+        self.frames["area"] = f
+
+        ttk.Label(f, text="Operating Area",
+                  font=("TkDefaultFont", 14, "bold")).pack(anchor="w")
+        ttk.Label(f,
+                  text=("Offline map tiles are fetched around a centre point. Full street "
+                        "detail is kept within the inner ring where a node actually "
+                        "navigates; the rest of the radius is covered at orientation zoom. "
+                        "Fetching the whole radius at street zoom is what turns a wide area "
+                        "into a multi-hour download."),
+                  wraplength=660, foreground="#666666", justify="left").pack(anchor="w", pady=(0, 14))
+
+        form = ttk.Frame(f)
+        form.pack(fill="x")
+        ttk.Label(form, text="Centre latitude:").grid(row=0, column=0, sticky="w", pady=4)
+        self.lat_var = tk.StringVar()
+        ttk.Entry(form, textvariable=self.lat_var, width=14).grid(row=0, column=1, sticky="w", padx=8)
+        ttk.Label(form, text="decimal degrees, e.g. 39.00 (N positive)",
+                  foreground="#888888").grid(row=0, column=2, sticky="w")
+
+        ttk.Label(form, text="Centre longitude:").grid(row=1, column=0, sticky="w", pady=4)
+        self.lon_var = tk.StringVar()
+        ttk.Entry(form, textvariable=self.lon_var, width=14).grid(row=1, column=1, sticky="w", padx=8)
+        ttk.Label(form, text="decimal degrees, e.g. -77.00 (W negative)",
+                  foreground="#888888").grid(row=1, column=2, sticky="w")
+
+        radius_row = ttk.LabelFrame(f, text="Radius")
+        radius_row.pack(fill="x", pady=(12, 8))
+        self.radius_var = tk.IntVar(value=50)
+        inner = ttk.Frame(radius_row)
+        inner.pack(anchor="w", padx=8, pady=6)
+        for miles in (50, 75, 150):
+            ttk.Radiobutton(inner, text=f"{miles} miles", value=miles,
+                            variable=self.radius_var).pack(side="left", padx=(0, 18))
+
+        self.area_estimate = ttk.Label(f, text="", justify="left", wraplength=660,
+                                        font=("Courier New", 9))
+        self.area_estimate.pack(anchor="w", pady=(8, 0))
+
+        self.area_error = ttk.Label(f, text="", foreground="#c0392b",
+                                     wraplength=660, justify="left")
+        self.area_error.pack(anchor="w", pady=(6, 0))
+
+        btns = ttk.Frame(f)
+        btns.pack(fill="x", pady=(14, 0))
+        ttk.Button(btns, text="\u2190 Back", command=lambda: self._show("options")).pack(side="left")
+        ttk.Button(btns, text="Continue \u2192",
+                   command=self._on_area_continue).pack(side="right")
+
+        # Trace every input rather than hanging the recompute off the
+        # radiobuttons' command: a variable changed any other way would leave a
+        # stale estimate on screen, which on this screen is a lie about a
+        # multi-hundred-megabyte download.
+        for var in (self.lat_var, self.lon_var, self.radius_var):
+            var.trace_add("write", lambda *_a: self._update_area_estimate())
+
+    def _parse_centre(self):
+        """(lat, lon) rounded to 2 dp, or None with the reason in area_error.
+
+        More precision is accepted and rounded rather than rejected — 2 dp is
+        about 1.1 km, ample for a map centre, and refusing 39.123 would only
+        annoy someone reading coordinates off a GPS.
+        """
+        try:
+            lat = round(float(self.lat_var.get().strip()), 2)
+            lon = round(float(self.lon_var.get().strip()), 2)
+        except ValueError:
+            return None
+        if not -85.0 <= lat <= 85.0:
+            self.area_error.configure(text="Latitude must be between -85 and 85 "
+                                           "(the Web Mercator limit).")
+            return None
+        if not -180.0 <= lon <= 180.0:
+            self.area_error.configure(text="Longitude must be between -180 and 180.")
+            return None
+        return lat, lon
+
+    def _update_area_estimate(self, *_a):
+        self.area_error.configure(text="")
+        centre = self._parse_centre()
+        if centre is None:
+            self.area_estimate.configure(text="Enter a centre to see the download estimate.")
+            return
+        lat, lon = centre
+        tf = load_tile_fetcher()
+        if tf is None:
+            self.area_estimate.configure(
+                text=f"centre {lat:.2f}, {lon:.2f}   (estimate unavailable — "
+                     f"{TILE_FETCHER} could not be loaded)")
+            return
+        radius = self.radius_var.get()
+        lines, total = [], 0
+        for desc, box, (zmin, zmax) in fetch_passes(
+                {"center": {"lat": lat, "lon": lon}, "radius_miles": radius}, tf):
+            n = tf.count_tiles(box, range(zmin, zmax + 1)) * len(MAP_LAYERS)
+            total += n
+            lines.append(f"  {desc:<16} z{zmin}-{zmax}   {n:>8,} tiles")
+        mb = total * 25 / 1024
+        mins = total * 0.1 / 60
+        lines.append(f"  {'both layers':<16}          {total:>8,} tiles"
+                     f"   ~{mb:,.0f} MB   ~{mins:,.0f} min")
+        self.area_estimate.configure(
+            text=f"centre {lat:.2f}, {lon:.2f} — radius {radius} mi\n" + "\n".join(lines))
+
+    def _on_area_continue(self):
+        centre = self._parse_centre()
+        if centre is None:
+            if not self.area_error.cget("text"):
+                self.area_error.configure(
+                    text="Enter a centre latitude and longitude in decimal degrees.")
+            return
+        lat, lon = centre
+        radius = self.radius_var.get()
+        node = hostname_from_node_id(self.node_id_var.get().strip()) or "node"
+        tf = load_tile_fetcher()
+        detail_r = min(tf.DETAIL_RADIUS_MILES if tf else 25, radius)
+        spec = {
+            "_comment": ("Generated by the provisioner. Tiles are fetched at full detail "
+                         "within detail_radius_miles and at orientation zoom to "
+                         "radius_miles. The bounding box is the outer ring, kept so the "
+                         "fetcher can be run directly with --area."),
+            "center": {"lat": lat, "lon": lon},
+            "radius_miles": radius,
+            "detail_radius_miles": detail_r,
+        }
+        if tf:
+            spec.update(tf.box_from_center(lat, lon, radius))
+        try:
+            AREA_DIR.mkdir(parents=True, exist_ok=True)
+            dest = AREA_DIR / f"{node.lower()}-area.json"
+            dest.write_text(json.dumps(spec, indent=2) + "\n")
+        except OSError as e:
+            self.area_error.configure(text=f"Could not write the area file: {e}")
+            return
+        self.area_file = dest
+        self._show_sudo_screen()
+
+    # -- screen 3: sudo credentials ---------------------------------------
     def _build_sudo_screen(self):
         f = ttk.Frame(self, padding=16)
         self.frames["sudo"] = f
@@ -1818,7 +2031,7 @@ class ProvisionerGUI(tk.Tk):
 
         btns = ttk.Frame(f)
         btns.pack(fill="x", pady=(10, 0))
-        ttk.Button(btns, text="\u2190 Back", command=lambda: self._show("options")).pack(side="left")
+        ttk.Button(btns, text="\u2190 Back", command=self._back_from_sudo).pack(side="left")
         self.start_btn = ttk.Button(btns, text="Start Provisioning", command=self._on_start)
         self.start_btn.pack(side="right")
 
@@ -1934,6 +2147,22 @@ class ProvisionerGUI(tk.Tk):
                 return
         self.selected_ids = selected
 
+        # The operating area is configuration, not privileged work, so it comes
+        # before the credential prompt — and only when the map step is actually
+        # selected. Skipping it otherwise keeps the flow at five screens for
+        # everyone who is not fetching tiles.
+        if "maps_fetch" in selected:
+            if "area" not in self.frames:
+                self._build_area_screen()
+            self.area_error.configure(text="")
+            self._update_area_estimate()
+            self._show("area")
+            return
+        self._show_sudo_screen()
+
+    def _show_sudo_screen(self):
+        node_id = self.node_id_var.get().strip()
+        selected = self.selected_ids
         if "sudo" not in self.frames:
             self._build_sudo_screen()
         labels = [c.label for c in COMPONENTS if c.id in selected]
@@ -1946,6 +2175,12 @@ class ProvisionerGUI(tk.Tk):
         self.sudo_error.configure(text="")
         self._show("sudo")
         self.sudo_entry.focus_set()
+
+    def _back_from_sudo(self):
+        """Back goes to wherever we came from — the area screen when the map
+        step is selected, the options screen otherwise."""
+        self._show("area" if "maps_fetch" in self.selected_ids and "area" in self.frames
+                   else "options")
 
     def _on_start(self):
         """Sudo -> run. Validates the password before leaving this screen, so a
