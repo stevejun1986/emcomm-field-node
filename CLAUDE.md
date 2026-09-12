@@ -120,7 +120,7 @@ rewritten with `git filter-repo` to remove exactly that. Do not repeat it.
 
 Before committing anything under `configs/`: no real callsign, no grid square
 (`MyGrid=` stays empty), no `alsa_output.*` device names, no absolute `/home/...`
-path, no site or organisation name.
+path, no site or organization name.
 
 ---
 
@@ -153,7 +153,7 @@ what each step would do, for a human to read. That is the right shape here: the
 bug class is "reported success, did nothing", which you catch by reading a
 transcript. `tests/flow.py` does assert, and fails loudly.
 
-Neither covers runtime behaviour — real `apt`, real downloads, real extraction.
+Neither covers runtime behavior — real `apt`, real downloads, real extraction.
 A VM run is required before any deployment, and the hardware claims need the
 actual dock.
 
@@ -164,7 +164,7 @@ actual dock.
 `TESTING.md`'s step table and `README.md`'s step list track the code and drift
 silently when it changes. They already have.
 
-**Change a step's label or behaviour → update `TESTING.md` and `README.md` in the
+**Change a step's label or behavior → update `TESTING.md` and `README.md` in the
 same commit.** Adding a step means adding its row. Changing what a step needs from
 the operator — as the map step now needs an operating area — means saying so, or a
 correct refusal reads as a failure.
@@ -184,7 +184,7 @@ repository, `main` is the only branch and the clone is what people run.
 
 ---
 
-## Licence
+## License
 
 GPL-3.0-or-later. `LICENSE` is the FSF text verbatim; the provisioner and the tile
 fetcher each carry the per-file notice the GPL asks for. The grant covers this
@@ -192,4 +192,4 @@ repository's own code, configuration templates and documentation — **not**
 third-party material a deployment pulls in or that is later committed here.
 Reference manuals, map tiles, ZIM archives, `.deb` packages and radio codeplugs
 each carry their own terms. Check redistribution terms before committing any
-third-party document, and record the licence alongside it.
+third-party document, and record the license alongside it.
