@@ -86,6 +86,13 @@ read-only verification pass checks what actually landed on disk — not merely t
 profiles were staged, but that placeholders were substituted and the map sources
 point at the layers the fetcher wrote. It reports; it never repairs.
 
+Every run writes a transcript to `~/.emcomm/logs/provision-<date>-<time>.log` —
+its path is on the run screen and again on the summary. It holds everything the
+log pane showed, the verification rows, the final result, and the **complete**
+output of any command that failed, which is more than the pane displays: the pane
+collapses runs of progress redraws so the error is not buried under them. If a
+deployment goes wrong, that file is the thing to send. The newest ten are kept.
+
 The callsign / node ID also becomes the machine's **system hostname**, with the
 matching `/etc/hosts` entry, so a fleet built by cloning one master image does not
 end up with every node answering to the same name.
