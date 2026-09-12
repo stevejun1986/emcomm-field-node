@@ -74,6 +74,45 @@ DATA_DIR_NAME = OPERATOR_PREFIX + "_Data"
 DEFAULT_UA = OPERATOR_PREFIX + "-Field-Node-TileFetcher/1.0 (set --user-agent with a contact address)"
 
 
+# Degrees per mile. Latitude is near enough constant; longitude narrows with
+# the cosine of the latitude, which is why a radius in miles is not a fixed
+# number of degrees and why a box near the poles is much wider than one at the
+# equator for the same radius.
+MILES_PER_DEG_LAT = 69.0
+MILES_PER_DEG_LON_EQUATOR = 69.172
+
+# Web Mercator cannot represent beyond about +/-85 degrees.
+MAX_LAT = 85.0
+
+DETAIL_RADIUS_MILES = 25      # inner ring kept at full zoom
+DETAIL_ZOOMS = (10, 15)       # street / trail level
+OVERVIEW_ZOOMS = (10, 12)     # orientation level
+
+
+def box_from_center(lat: float, lon: float, radius_miles: float) -> dict:
+    """A bounding box `radius_miles` around a centre point.
+
+    Clamped to the Web Mercator latitude limit and to +/-180 longitude, so a
+    centre near a pole or near the antimeridian yields a valid box rather than
+    one the fetcher will reject. Near the poles cos(lat) collapses and the
+    longitude span would otherwise run away.
+    """
+    # Clamp the CENTRE first. Clamping only the edges of a box drawn around a
+    # centre beyond the Mercator limit yields south > north — a box the fetcher
+    # correctly refuses — so a centre at 89N is treated as one at 85N.
+    lat = max(-MAX_LAT, min(MAX_LAT, lat))
+    lon = max(-180.0, min(180.0, lon))
+    dlat = radius_miles / MILES_PER_DEG_LAT
+    cos_lat = math.cos(math.radians(lat))
+    dlon = radius_miles / (MILES_PER_DEG_LON_EQUATOR * max(cos_lat, 0.01))
+    return {
+        "north": round(min(MAX_LAT, lat + dlat), 6),
+        "south": round(max(-MAX_LAT, lat - dlat), 6),
+        "east":  round(min(180.0, lon + dlon), 6),
+        "west":  round(max(-180.0, lon - dlon), 6),
+    }
+
+
 def deg2num(lat_deg: float, lon_deg: float, zoom: int) -> tuple[int, int]:
     """Lat/lon to slippy-map tile x/y (standard Web Mercator)."""
     lat_rad = math.radians(lat_deg)
@@ -139,6 +178,10 @@ def main() -> int:
         epilog="Sources:\n" + "\n".join(f"  {k:9s} {v[1]}" for k, v in SOURCES.items()),
     )
     ap.add_argument("--area", type=Path, help="JSON file with north/south/east/west")
+    ap.add_argument("--center-lat", type=float,
+                    help="centre latitude; with --center-lon and --radius-miles")
+    ap.add_argument("--center-lon", type=float)
+    ap.add_argument("--radius-miles", type=float)
     ap.add_argument("--north", type=float)
     ap.add_argument("--south", type=float)
     ap.add_argument("--east", type=float)
@@ -161,11 +204,17 @@ def main() -> int:
         if not args.area.is_file():
             sys.exit(f"error: no such area file: {args.area}")
         area = validate_area(json.loads(args.area.read_text()))
+    elif None not in (args.center_lat, args.center_lon, args.radius_miles):
+        if args.radius_miles <= 0:
+            sys.exit("error: --radius-miles must be positive")
+        area = validate_area(box_from_center(args.center_lat, args.center_lon,
+                                             args.radius_miles))
     elif None not in (args.north, args.south, args.east, args.west):
         area = validate_area({"north": args.north, "south": args.south,
                               "east": args.east, "west": args.west})
     else:
-        ap.error("supply --area FILE, or all four of --north --south --east --west")
+        ap.error("supply --area FILE, or --center-lat/--center-lon/--radius-miles, "
+                 "or all four of --north --south --east --west")
 
     if args.min_zoom > args.max_zoom:
         sys.exit("error: --min-zoom cannot exceed --max-zoom")

@@ -32,11 +32,13 @@ assert "sudo" not in app.frames
 print("OK: blank Node ID blocked before any credential prompt")
 
 app.node_id_var.set("N0CALL")
+# deliberately NOT maps_fetch: that path goes via the operating-area screen
+# and is covered by tests/area.py. This test covers the five-screen flow.
 app.component_vars["config_profiles"].set(True)
-app.component_vars["maps_fetch"].set(True)
+app.component_vars["docs_server"].set(True)
 app._on_continue_to_sudo()
 assert "sudo" in app.frames
-assert app.selected_ids == {"config_profiles", "maps_fetch"}, app.selected_ids
+assert app.selected_ids == {"config_profiles", "docs_server"}, app.selected_ids
 assert "2 step(s) selected" in app.sudo_summary.cget("text")
 print("OK: options -> sudo, selections carried")
 
