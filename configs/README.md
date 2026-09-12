@@ -71,10 +71,10 @@ area. Define at least one or the step fetches nothing and says so — it will no
 silently produce an empty map.
 
 When the map step is selected, the provisioner shows an **Operating Area** screen
-that takes a centre point and a radius, shows the download estimate before
+that takes a center point and a radius, shows the download estimate before
 committing, and writes the area file for you. Hand-writing one is still supported.
 
-### Centre and radius, and why tiles are tiered
+### Center and radius, and why tiles are tiered
 
 An area with a `center` and `radius_miles` is fetched in two passes: full street
 detail within `detail_radius_miles` (25 by default), and orientation zoom out to

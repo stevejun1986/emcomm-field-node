@@ -88,8 +88,8 @@ machine, since several failures only appear on a second run.
 ```bash
 python3 tests/dryrun.py     # every step, nothing installed
 python3 tests/flow.py       # the five screens and verification wiring
-python3 tests/area.py       # centre/radius input, the estimate, the file it writes
-python3 tests/throttle.py   # pacing, backoff, and behaviour when rate-limited
+python3 tests/area.py       # center/radius input, the estimate, the file it writes
+python3 tests/throttle.py   # pacing, backoff, and behavior when rate-limited
 python3 tests/build.py      # build parallelism capped by memory, not cores
 ```
 
@@ -108,7 +108,7 @@ that does not exist, a fetch invoked with arguments it rejects, a green summary
 line sitting outside the branch that earned it. All of those are invisible on a
 real machine until someone needs the radio.
 
-It does not cover runtime behaviour — real downloads, real archive extraction,
+It does not cover runtime behavior — real downloads, real archive extraction,
 real `apt`. A VM run is still required before any deployment.
 
 `tests/flow.py` additionally asserts that **every screen fits a 1024x768 panel** —

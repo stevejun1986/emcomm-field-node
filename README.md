@@ -91,7 +91,7 @@ matching `/etc/hosts` entry, so a fleet built by cloning one master image does n
 end up with every node answering to the same name.
 
 If the map step is selected, a sixth screen — **Operating Area** — appears before
-the credential prompt. It takes a centre point in decimal degrees and a radius
+the credential prompt. It takes a center point in decimal degrees and a radius
 (50, 75 or 150 miles), shows the tile count, size and time **before** anything
 downloads, and writes the area file. Tiles are tiered: full street detail within
 25 miles, orientation zoom to the full radius. Coverage scales with the square of
@@ -179,18 +179,18 @@ node.
 
 ## Licensing
 
-Transmitting requires the appropriate licence — this is the operator's
+Transmitting requires the appropriate license — this is the operator's
 responsibility, not the software's:
 
-* **Amateur licence required to transmit:** JS8Call, ion2G HF ALE, Direwolf/APRS,
+* **Amateur license required to transmit:** JS8Call, ion2G HF ALE, Direwolf/APRS,
   and amateur-band DMR. Receive-only use of any of these does not.
-* **GMRS licence required:** GMRS channels.
-* **No licence required:** FRS, MURS, Meshtastic (915 MHz ISM), SatDump reception,
+* **GMRS license required:** GMRS channels.
+* **No license required:** FRS, MURS, Meshtastic (915 MHz ISM), SatDump reception,
   and receiving generally.
 
 The callsign entered at provisioning is written into the JS8Call profile as
 `MyCall`. **Set a real, licensed callsign before transmitting.** A placeholder is
-not a licence.
+not a license.
 
 Amateur radio may not be used for communications in which the operator has a
 pecuniary interest, and traffic must be sent in the clear so it can be understood
@@ -198,7 +198,7 @@ by anyone monitoring. Plan nets accordingly: assume everything you send is publi
 
 ---
 
-## Licence
+## License
 
 This package is free software, licensed under the **GNU General Public License,
 version 3 or (at your option) any later version**. The full text is in
@@ -215,7 +215,7 @@ nodes as you like, change it to suit your group. If you distribute a modified
 version, pass on the source under the same terms so the next group gets the same
 freedom — including whatever you fixed in the field.
 
-### What this licence covers
+### What this license covers
 
 The provisioner, the tile fetcher, the configuration templates and the
 documentation written for this repository.
@@ -225,8 +225,8 @@ later added to this tree. Reference manuals, map tiles, ZIM archives, `.deb`
 packages and radio codeplugs each carry their own terms, set by whoever
 published them. `docs/` and `scripts/Packages/` are intentionally empty here for
 that reason. **Before committing a third-party document into this repository,
-check that its licence permits redistribution** — and record that licence
+check that its license permits redistribution** — and record that license
 alongside it.
 
-Nothing in this licence is a licence to transmit. See the regulatory section
+Nothing in this license is a license to transmit. See the regulatory section
 above.
