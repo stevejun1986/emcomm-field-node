@@ -175,6 +175,39 @@ def load_tile_fetcher():
         return None
 
 
+SAMPLE_AREA = AREA_DIR / "example-area.json.sample"
+
+
+def _bounds(spec: dict):
+    """(north, south, east, west) as floats, or None if the spec lacks them."""
+    try:
+        return tuple(round(float(spec[k]), 6) for k in ("north", "south", "east", "west"))
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def is_unmodified_sample(spec: dict) -> bool:
+    """True if `spec` has the shipped sample's exact bounds.
+
+    The sample ships as .json.sample so it is never read as a live area, but a
+    clone that predates that rename leaves a real example-area.json on disk.
+    configs/areas/*.json is gitignored, so git never mentions it and the file
+    is fetched in silence — someone else's city, at full detail, before the
+    operator's own area.
+
+    Compared by bounds rather than by filename: an operator who edited the
+    sample in place has a legitimate area and must not have it skipped.
+    """
+    mine = _bounds(spec)
+    if mine is None or not SAMPLE_AREA.is_file():
+        return False
+    try:
+        theirs = _bounds(json.loads(SAMPLE_AREA.read_text(errors="replace")))
+    except (OSError, ValueError):
+        return False
+    return theirs is not None and mine == theirs
+
+
 def fetch_passes(spec: dict, tf) -> list:
     """[(description, bbox, (min_zoom, max_zoom))] for one operating area.
 
@@ -799,6 +832,8 @@ def step_maps_fetch(ctx: Ctx):
                 f"set your own bounds, and re-run this step — no tiles fetched.", "warn")
         return
 
+    ctx.log("[*] Operating area(s) found: " + ", ".join(p.stem for p in areas), "info")
+
     tf = load_tile_fetcher()
     if tf is None:
         ctx.log(f"[!] Could not load {TILE_FETCHER} as a module — falling back to a "
@@ -811,6 +846,12 @@ def step_maps_fetch(ctx: Ctx):
         except (OSError, ValueError) as e:
             ctx.log(f"[!] {area_path} is not readable JSON ({e}) — skipped.", "err")
             fail_count += 1
+            continue
+
+        if is_unmodified_sample(spec):
+            ctx.log(f"[!] {area_path.name} holds the shipped sample's bounds unchanged "
+                    f"— skipped. It is a leftover from a clone that predates "
+                    f"{SAMPLE_AREA.name}; delete it, or set your own bounds in it.", "warn")
             continue
 
         passes = fetch_passes(spec, tf)
