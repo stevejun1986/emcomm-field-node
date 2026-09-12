@@ -32,7 +32,7 @@ before an hour of package installation.
 | 7 | QLog station log + ion2G HF ALE | Checksum must verify; re-run to confirm it is idempotent |
 | 8 | Offline knowledgebase | Large download; the pinned URL will eventually rotate |
 | 9 | Direwolf / Meshtastic | Needs hardware to validate beyond "it installed" |
-| 10 | SatDump | Slowest by far if it falls back to a source build |
+| 10 | SatDump | Always a source build; the longest step. Confirm `satdump` reaches `PATH` after `make install` |
 | 11 | Dock-trigger autostart | **Havis DS-PAN-111 + CF-30 only.** The udev rule matches that dock's hub (`05e3:0610`) — it is the real ID, not a placeholder. On other hardware the files install and the rule simply never fires. See **Supported Hardware** in the README |
 | 12 | Slim appliance build | Destructive — `apt purge`s preinstalled apps and disables mintupdate. Test last, on a VM you can roll back |
 
@@ -69,8 +69,11 @@ checksum. If a step is not safely re-runnable, that is a bug worth reporting.
   Mint. Without it the GUI does not start at all.
 * **The Kiwix URL is pinned** to a dated snapshot and will 404 once upstream
   rotates it. Pick a current file and update the URL and hash.
-* **The SatDump hash is pinned** to one package version. A different `.deb` is
-  refused until the expected hash is updated — correct behavior, not a bug.
+* **SatDump is built from source on every node**, and it is the longest step by
+  far. Parallelism is capped by available memory rather than core count: on a
+  4 GB node with a desktop running it builds with `-j1` — slow, but it will not
+  be killed part-way. A compiler *killed* rather than erroring ran out of
+  memory; retry with fewer jobs.
 
 ## Reporting a failure
 
@@ -87,6 +90,7 @@ python3 tests/dryrun.py     # every step, nothing installed
 python3 tests/flow.py       # the five screens and verification wiring
 python3 tests/area.py       # center/radius input, the estimate, the file it writes
 python3 tests/throttle.py   # pacing, backoff, and behavior when rate-limited
+python3 tests/build.py      # build parallelism capped by memory, not cores
 ```
 
 `tests/flow.py` needs Tk (`sudo apt install python3-tk`) and a display. On a

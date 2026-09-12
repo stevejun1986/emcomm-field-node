@@ -6,12 +6,11 @@ their own licensing.
 
 | Item | Used by |
 | --- | --- |
-| `satdump_<version>_<distro>_amd64.deb` | SatDump step, if present |
 
-If no SatDump `.deb` is present the provisioner falls back to building from
-source, which works but takes considerably longer.
+SatDump is **not** cached here. It is built from source on every node: upstream
+publishes `.deb` packages on GitHub releases but runs no apt repository, so a
+packaged install meant carrying a `.deb` and its SHA-256 in this repository and
+revising both on every release.
 
-**Verify what you cache.** The provisioner checks a SHA-256 for the SatDump
-package before installing it. If you drop in a different version, update the
-expected hash in the provisioner to match, or the step will refuse to install it
-— which is the correct behavior, not a bug to work around.
+**Verify what you cache.** Anything placed here is installed without this
+repository having vouched for it. Check provenance and integrity yourself.

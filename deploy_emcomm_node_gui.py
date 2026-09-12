@@ -1218,61 +1218,107 @@ def optional_meshtastic(ctx: Ctx):
     ctx.log("[!] Meshtastic node config is NOT applied automatically — see the staged reference.", "warn")
 
 
+def _build_jobs() -> int:
+    """Parallel make jobs, capped by RAM as well as by core count.
+
+    SatDump is heavy C++: one translation unit can take well over a gigabyte,
+    and the reference node is a 4 GB dual-core also running a desktop session
+    and this GUI. -j2 there can exhaust memory, and an OOM-killed compiler
+    reports as an ordinary build failure with nothing pointing at the cause.
+    One job per 2 GB is the usual rule of thumb.
+    """
+    cpus = os.cpu_count() or 1
+    # MemAvailable, not total: the desktop session, X and this GUI are already
+    # resident and the build competes with them. On a 4 GB node that is the
+    # difference between budgeting 4 GB and the ~2.5 GB actually free, and so
+    # between -j2 and -j1.
+    try:
+        for line in Path("/proc/meminfo").read_text().splitlines():
+            if line.startswith("MemAvailable:"):
+                free_gb = int(line.split()[1]) / 1024 ** 2
+                break
+        else:
+            free_gb = (os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES")) / 1024 ** 3
+    except (OSError, ValueError, IndexError, AttributeError):
+        return cpus
+    return max(1, min(cpus, int(free_gb // 2)))
+
+
 def optional_satdump(ctx: Ctx):
-    satdump_version = "1.2.2"
-    satdump_deb_local = Path(f"scripts/Packages/satdump_{satdump_version}_ubuntu_24.04_amd64.deb")
-    satdump_deb_sha256 = "68672f0d1bb76d5646d02ad2cbbeaa7549bed5ecedf4ee27d0d8467e72cf3221"
+    # Built from source. Upstream ships .deb packages on GitHub releases but
+    # runs no apt repository, so a packaged install meant carrying a .deb and
+    # its SHA-256 in this repository and revising both on every release. The
+    # source build needs neither.
+    with ctx.spin("Installing SatDump build dependencies..."):
+        ctx.sudo("apt", "install", "-y",
+                 "git", "build-essential", "cmake", "g++", "pkgconf", "libfftw3-dev", "libpng-dev",
+                 "libtiff-dev", "libjemalloc-dev", "libcurl4-openssl-dev", "libsqlite3-dev",
+                 "librtlsdr-dev", "libhackrf-dev", "libairspy-dev", "libairspyhf-dev",
+                 "libdbus-1-dev", "libgl1-mesa-dev", "libpulse-dev", "libusb-1.0-0-dev",
+                 "freeglut3-dev", "libglfw3-dev", "libzen-dev", "libmediainfo-dev", check=False)
 
-    if satdump_deb_local.is_file():
-        satdump_deb_local.chmod(0o644)
-        checksum_ok = ctx.verify_checksum(satdump_deb_local, satdump_deb_sha256)
-        deb_install_ok = False
-        if checksum_ok:
-            with ctx.spin(f"Installing SatDump {satdump_version} from local repo cache...") as spin_result:
-                deb_install_ok = ctx.sudo("apt", "install", "-y", str(satdump_deb_local), check=False).returncode == 0
-                spin_result.ok = deb_install_ok
-        if deb_install_ok:
-            ctx.log("[+] SatDump installed via local .deb.", "ok")
-            ctx.satdump_installed = True
-        else:
-            ctx.log("[!] Local .deb install/verification failed — falling back to source build...", "warn")
+        # The VOLK package name varies across releases; take whichever exists.
+        for pkg in ("libvolk-dev", "libvolk2-dev", "libvolk1-dev"):
+            if ctx.sudo("apt", "install", "-y", pkg, check=False).returncode == 0:
+                break
+        ctx.sudo("apt", "install", "-y", "libnng-dev", check=False)
+
+    satdump_dir = ctx.home / APPS_DIR_NAME / "SatDump"
+    if not satdump_dir.is_dir():
+        with ctx.spin("Cloning SatDump source...") as spin_result:
+            # Shallow: the full history is a large download for a node being
+            # provisioned over whatever connection is to hand.
+            spin_result.ok = ctx.run(
+                ["git", "clone", "--depth", "1",
+                 "https://github.com/SatDump/SatDump.git", str(satdump_dir)],
+                check=False).returncode == 0
+    if not satdump_dir.is_dir():
+        ctx.log("[!] SatDump source clone failed — SatDump NOT installed.", "err")
+        return
+
+    # No version is pinned, so record what was built. Otherwise a node's
+    # SatDump is whatever upstream HEAD was on the day it was imaged, with
+    # nothing on the machine saying which.
+    head = ctx.run(["git", "-C", str(satdump_dir), "rev-parse", "--short", "HEAD"], check=False)
+    built_commit = (head.stdout or "").strip() or "unknown"
+
+    build_dir = satdump_dir / "build"
+    build_dir.mkdir(parents=True, exist_ok=True)
+    jobs = _build_jobs()
+    if jobs < (os.cpu_count() or 1):
+        ctx.log(f"[*] Building with -j{jobs} rather than -j{os.cpu_count()}: memory, "
+                f"not cores, is the limit here. Slower, but it will not be "
+                f"killed part-way.", "info")
+    build_status = 1
+    with ctx.spin(f"Building SatDump {built_commit} with -j{jobs} "
+                  f"(several minutes; much longer on a slow node)...") as spin_result:
+        if ctx.run(["cmake", ".."], cwd=build_dir, check=False).returncode == 0:
+            build_status = ctx.run(["make", f"-j{jobs}"], cwd=build_dir, check=False).returncode
+        spin_result.ok = (build_status == 0)
+
+    if build_status != 0:
+        ctx.log("[!] SatDump build failed — SatDump NOT installed. Retry manually:", "err")
+        ctx.log(f"    cd {build_dir} && cmake .. && make -j{jobs}", "err")
+        ctx.log("    If the compiler was killed rather than reporting an error, it ran "
+                "out of memory — retry with make -j1.", "err")
+        return
+
+    ctx.log(f"[+] SatDump {built_commit} built in {build_dir}", "ok")
+
+    # Install so `satdump` is on PATH and a desktop entry exists. Without this
+    # the binary stays in the build tree, the shortcut step can never find a
+    # .desktop file, and the operator has no satdump command.
+    installed = False
+    with ctx.spin("Installing SatDump system-wide...") as spin_result:
+        installed = ctx.sudo("make", "install", cwd=build_dir, check=False).returncode == 0
+        spin_result.ok = installed
+    if installed:
+        ctx.sudo("ldconfig", check=False)
+        ctx.log("[+] SatDump installed system-wide.", "ok")
     else:
-        ctx.log(f"[!] No local .deb found at {satdump_deb_local} — falling back to source build...", "warn")
-
-    if not ctx.satdump_installed:
-        with ctx.spin("Installing SatDump build dependencies..."):
-            ctx.sudo("apt", "install", "-y",
-                     "git", "build-essential", "cmake", "g++", "pkgconf", "libfftw3-dev", "libpng-dev",
-                     "libtiff-dev", "libjemalloc-dev", "libcurl4-openssl-dev", "libsqlite3-dev",
-                     "librtlsdr-dev", "libhackrf-dev", "libairspy-dev", "libairspyhf-dev",
-                     "libdbus-1-dev", "libgl1-mesa-dev", "libpulse-dev", "libusb-1.0-0-dev",
-                     "freeglut3-dev", "libglfw3-dev", "libzen-dev", "libmediainfo-dev", check=False)
-
-            for pkg in ("libvolk-dev", "libvolk2-dev", "libvolk1-dev"):
-                if ctx.sudo("apt", "install", "-y", pkg, check=False).returncode == 0:
-                    break
-            ctx.sudo("apt", "install", "-y", "libnng-dev", check=False)
-
-        satdump_dir = ctx.home / APPS_DIR_NAME / "SatDump"
-        if not satdump_dir.is_dir():
-            with ctx.spin("Cloning SatDump source..."):
-                ctx.run(["git", "clone", "https://github.com/SatDump/SatDump.git", str(satdump_dir)])
-
-        build_dir = satdump_dir / "build"
-        build_dir.mkdir(parents=True, exist_ok=True)
-        build_status = 1
-        with ctx.spin("Building SatDump (this can take several minutes)...") as spin_result:
-            if ctx.run(["cmake", ".."], cwd=build_dir, check=False).returncode == 0:
-                nproc = str(os.cpu_count() or 1)
-                build_status = ctx.run(["make", f"-j{nproc}"], cwd=build_dir, check=False).returncode
-            spin_result.ok = (build_status == 0)
-
-        if build_status == 0:
-            ctx.log(f"[+] SatDump built successfully at {build_dir}", "ok")
-            ctx.satdump_installed = True
-        else:
-            ctx.log("[!] SatDump build failed — retry manually:", "err")
-            ctx.log(f"    cd {build_dir} && cmake .. && make -j$(nproc)", "err")
+        ctx.log(f"[!] 'make install' failed — the binary works at {build_dir}/satdump "
+                f"but is not on PATH and has no desktop entry.", "warn")
+    ctx.satdump_installed = True
 
     if ctx.satdump_installed:
         ctx.log("[*] Deploying SatDump TLE configuration...", "warn")
