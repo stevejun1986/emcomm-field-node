@@ -79,6 +79,13 @@ Three rules follow. They are not style preferences.
    but substitutes nothing is used verbatim as a real value, which is worse than
    a missing setting.
 
+4. **A failing step is contained, never fatal to the run.** The steps are
+   independent by design, so an exception escaping one of them and aborting the
+   other twelve is a bug, not caution. Report it by name and continue. This has
+   happened: a Flatpak install failed at step 4 of 13 and the operator lost
+   maps, profiles, the dock trigger, Direwolf, Meshtastic and SatDump — none of
+   which had anything to do with it.
+
 Before committing a change to any step, run `python3 tests/dryrun.py` and read the
 transcript for exactly this.
 

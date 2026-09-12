@@ -16,6 +16,11 @@ Steps are deliberately **not** dependency-checked. Running "QLog + ion2G" withou
 "System packages" assumes `wine` and `unzip` are already installed. That is the
 tradeoff for being able to re-run one step in isolation.
 
+A step that fails is **contained**: it is reported by name, and the remaining
+steps still run. A run ends with an honest tally rather than stopping at the
+first problem, because the steps are independent and losing eleven of them to
+one failure serves nobody. Check the summary screen for which steps failed.
+
 ## Suggested order
 
 Roughly cheapest and most reversible first, so a broken assumption surfaces
@@ -91,6 +96,7 @@ python3 tests/flow.py       # the five screens and verification wiring
 python3 tests/area.py       # center/radius input, the estimate, the file it writes
 python3 tests/throttle.py   # pacing, backoff, and behavior when rate-limited
 python3 tests/build.py      # build parallelism capped by memory, not cores
+python3 tests/isolation.py  # one failing step must not stop the others
 ```
 
 `tests/flow.py` needs Tk (`sudo apt install python3-tk`) and a display. On a

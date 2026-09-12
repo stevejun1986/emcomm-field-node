@@ -774,12 +774,32 @@ def step_qlog_ion2g(ctx: Ctx):
         flatpak_has_qlog = "qlog" in r.stdout
 
     if not has_qlog and not flatpak_has_qlog:
-        with ctx.spin("Installing QLog via Flatpak..."):
+        rc = 1
+        with ctx.spin("Installing QLog via Flatpak...") as spin_result:
             if not shutil.which("flatpak"):
                 ctx.sudo("apt", "install", "-y", "flatpak")
-                ctx.sudo("flatpak", "remote-add", "--if-not-exists",
-                         "flathub", "https://flathub.org/repo/flathub.flatpakrepo")
-            ctx.run(["flatpak", "install", "-y", "flathub", "io.github.foldynl.QLog"])
+            # Unconditional, and idempotent via --if-not-exists. Previously this
+            # sat inside the "flatpak is missing" branch, so on a node that
+            # already had flatpak the remote was never added and the install
+            # below could only fail.
+            ctx.sudo("flatpak", "remote-add", "--if-not-exists",
+                     "flathub", "https://flathub.org/repo/flathub.flatpakrepo")
+            # Through sudo. The remote above is a system installation, and a
+            # user-invoked install against it needs a polkit authorisation that
+            # a GUI with no agent cannot obtain — the failure reads "Flatpak
+            # system operation Deploy not allowed for user". finalize() also
+            # looks for the exported .desktop under /var/lib/flatpak, which
+            # only exists for a system install.
+            rc = ctx.sudo("flatpak", "install", "-y", "flathub",
+                          "io.github.foldynl.QLog", check=False).returncode
+            spin_result.ok = (rc == 0)
+        if rc == 0:
+            ctx.log("[+] QLog installed via Flatpak.", "ok")
+        else:
+            # Not fatal to this step: ion2G below is the operational piece, and
+            # QLog is a station log that nothing else depends on.
+            ctx.log(f"[!] QLog Flatpak install failed (exit {rc}) — continuing to "
+                    f"ion2G. QLog is a station log; nothing else depends on it.", "warn")
 
     ion2g_url = "https://ion2g.app/software/ion2g-0.9.8.8-win64.zip"
     ion2g_sha256 = "0a358f0124d038b4ee50e124a52801b2067e9515eed7f2b65985e9425e4965af"
@@ -1782,6 +1802,7 @@ class ProvisionerGUI(tk.Tk):
         self.selected_ids: set = set()
         self.check_results: list = []
         self.run_outcome: str = "unknown"     # completed | failed | cancelled
+        self.failed_steps: list = []          # steps that raised, by label
         self.area_file = None                 # written by the area screen, if shown
 
         self._build_options_screen()
@@ -2355,7 +2376,12 @@ class ProvisionerGUI(tk.Tk):
         t.insert("end", "Node: ", "head"); t.insert("end", node_id + "\n\n")
         t.insert("end", "Result\n", "head")
         t.insert("end", "    %s\n" % title, tag)
-        t.insert("end", "    %d step(s) run, %d skipped\n\n" % (len(ran), skipped))
+        t.insert("end", "    %d step(s) run, %d skipped\n" % (len(ran), skipped))
+        if self.failed_steps:
+            t.insert("end", "    %d step(s) failed:\n" % len(self.failed_steps), "err")
+            for label in self.failed_steps:
+                t.insert("end", "        %s\n" % label, "err")
+        t.insert("end", "\n")
 
         t.insert("end", "Verification\n", "head")
         t.insert("end", "    %d passed\n" % passed, "ok")
@@ -2410,6 +2436,7 @@ class ProvisionerGUI(tk.Tk):
         self.msg_queue.put(("log", message, level))
 
     def _run_provisioning(self, ctx: Ctx, selected_ids: set):
+        failed = []
         try:
             for i, comp in enumerate(COMPONENTS, start=1):
                 self._cancel_check()
@@ -2418,33 +2445,78 @@ class ProvisionerGUI(tk.Tk):
                     self._queue_log(f"===== {comp.label} — skipped (not selected) =====", "info")
                     continue
                 self._queue_log(f"===== {comp.label} =====", "info")
-                comp.fn(ctx)
-            self.msg_queue.put(("done", True, ctx.node_id))
+                # Each step is isolated. The steps are independent by design —
+                # that is the whole premise of the checklist — so one failing
+                # must not cost the operator the twelve that would have worked.
+                try:
+                    comp.fn(ctx)
+                except ProvisioningCancelled:
+                    raise                       # a cancel is not a step failure
+                except subprocess.CalledProcessError as e:
+                    failed.append(comp.label)
+                    self._report_command_failure(e)
+                    self._queue_log(f"[!] {comp.label} FAILED — continuing with the "
+                                    f"remaining steps.", "err")
+                except Exception as e:      # noqa: BLE001 — surface it, keep going
+                    failed.append(comp.label)
+                    self._queue_log(f"[!] {comp.label} FAILED: {e!r} — continuing with "
+                                    f"the remaining steps.", "err")
+
+            if failed:
+                self._queue_log(f"=== {len(failed)} step(s) failed: "
+                                f"{', '.join(failed)} ===", "err")
+            self.failed_steps = list(failed)
+            self.msg_queue.put(("done", not failed, ctx.node_id))
             self._queue_verification(ctx, selected_ids)
         except ProvisioningCancelled:
             self.msg_queue.put(("cancelled", None, None))
             # Still verify: what did land before the stop is the useful part.
             self._queue_verification(ctx, selected_ids)
-        except subprocess.CalledProcessError as e:
-            cmd_str = " ".join(str(c) for c in e.cmd) if isinstance(e.cmd, (list, tuple)) else str(e.cmd)
-            self._queue_log(f"[!] Command failed: {cmd_str} (exit {e.returncode})", "err")
-            output = (e.output or "").rstrip()
-            if output:
-                lines = output.splitlines()
-                if len(lines) > 40:
-                    self._queue_log(f"  ... ({len(lines) - 40} earlier line(s) omitted) ...", "err")
-                    lines = lines[-40:]
-                for line in lines:
-                    self._queue_log(f"  {line}", "err")
-            self.msg_queue.put(("done", False, None))
-            self._queue_verification(ctx, selected_ids)
-        except Exception as e:  # noqa: BLE001 — surface anything unexpected to the user
-            self._queue_log(f"[!] Unexpected error: {e!r}", "err")
+        except Exception as e:      # noqa: BLE001 — something outside any step
+            self._queue_log(f"[!] Unexpected error outside a step: {e!r}", "err")
             self.msg_queue.put(("done", False, None))
             self._queue_verification(ctx, selected_ids)
         finally:
             if ctx.askpass:
                 ctx.askpass.close()
+
+    @staticmethod
+    def _condense(lines: list) -> list:
+        """Collapse runs of progress redraws into a single placeholder.
+
+        flatpak and apt emit one line per percentage tick. A failing flatpak
+        install produced 588 of them, burying the one line that said what was
+        actually wrong. Lines are compared with digits and whitespace stripped,
+        so successive ticks of the same bar collapse while genuinely different
+        output — including the error at the end — survives.
+        """
+        out, last_key, run = [], None, 0
+        for line in lines:
+            key = re.sub(r"[\d.,:%/]+|\s+", "", line)[:60]
+            if key and key == last_key:
+                run += 1
+                continue
+            if run:
+                out.append(f"  ... ({run} more progress line(s)) ...")
+                run = 0
+            out.append(line)
+            last_key = key
+        if run:
+            out.append(f"  ... ({run} more progress line(s)) ...")
+        return out
+
+    def _report_command_failure(self, e: subprocess.CalledProcessError):
+        cmd_str = " ".join(str(c) for c in e.cmd) if isinstance(e.cmd, (list, tuple)) else str(e.cmd)
+        self._queue_log(f"[!] Command failed: {cmd_str} (exit {e.returncode})", "err")
+        output = (e.output or "").rstrip()
+        if not output:
+            return
+        lines = self._condense(output.splitlines())
+        if len(lines) > 40:
+            self._queue_log(f"  ... ({len(lines) - 40} earlier line(s) omitted) ...", "err")
+            lines = lines[-40:]
+        for line in lines:
+            self._queue_log(f"  {line}", "err")
 
     def _queue_verification(self, ctx: Ctx, selected_ids: set):
         """Run the read-only checks on the worker thread and stream each row to
