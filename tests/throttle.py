@@ -89,4 +89,20 @@ for name, (url, _desc) in f.SOURCES.items():
     assert "/arcgis/" not in url, (name, url)
 print("OK: all %d sources use the case-sensitive /ArcGIS/ path" % len(f.SOURCES))
 
+
+# --- the estimate must match the pacing it describes --------------------
+assert f.estimate_seconds(0) == 0.0
+assert f.estimate_seconds(1, 0.15, 0, 5) == 0.15
+assert f.estimate_seconds(100, 0.15, 100, 5) == 100 * 0.15          # no pause yet
+assert f.estimate_seconds(101, 0.15, 100, 5) == 101 * 0.15 + 5      # one pause
+assert f.estimate_seconds(250, 0.15, 100, 5) == 250 * 0.15 + 10     # two pauses
+assert f.estimate_seconds(1000, 0.15, 0, 5) == 150.0                 # bursting off
+print("OK: estimate_seconds counts burst pauses, not just spacing")
+
+# defaults are shared, so the estimate cannot drift from the download again
+import inspect
+src = inspect.getsource(f.main)
+for name in ("DEFAULT_DELAY", "DEFAULT_BURST", "DEFAULT_PAUSE"):
+    assert name in src, "argparse should default from %s, not a literal" % name
+print("OK: argparse defaults come from the shared constants")
 print("\nTHROTTLE: ALL ASSERTIONS PASSED")

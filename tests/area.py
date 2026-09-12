@@ -97,7 +97,18 @@ app.radius_var.set(75)
 app.update_idletasks()
 est = app.area_estimate.cget("text")
 assert "39.12" in est and "-77.99" in est, est
-assert "radius 75 mi" in est and "both layers" in est, est
+assert "radius 75 mi" in est and "total" in est, est
+# every row already counts all layers; the sum must not be labelled as if the
+# rows above it were per-layer
+assert "both layers" not in est, est
+rows = [l for l in est.splitlines() if "tiles" in l and "total" not in l]
+per_row = sum(int(l.split()[-2].replace(",", "")) for l in rows)
+total_row = int([l for l in est.splitlines() if "total" in l][0].split()[1].replace(",", ""))
+assert per_row == total_row, (per_row, total_row)
+one_layer = sum(tf.count_tiles(b, range(z0, z1 + 1)) for _d, b, (z0, z1) in
+                mod.fetch_passes({"center": {"lat": 39.12, "lon": -77.99},
+                                  "radius_miles": 75}, tf))
+assert total_row == one_layer * len(mod.MAP_LAYERS), (total_row, one_layer)
 print("OK: estimate rounds to 2 dp and totals both layers")
 print("   " + est.replace("\n", "\n   "))
 

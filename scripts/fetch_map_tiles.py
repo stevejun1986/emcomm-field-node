@@ -158,6 +158,30 @@ def validate_area(area: dict) -> dict:
 
 
 # Statuses a tile server uses to say "slow down" rather than "no such tile".
+# Pacing defaults, named so the GUI's estimate can import them instead of
+# carrying its own copy. They drifted once: the estimate still assumed 0.1s
+# after the default moved to 0.15s, and understated a run by about a third.
+DEFAULT_DELAY = 0.15
+DEFAULT_BURST = 100
+DEFAULT_PAUSE = 5.0
+KB_PER_TILE = 25          # rule of thumb for a USGS basemap PNG
+
+
+def estimate_seconds(tiles: int, delay: float = DEFAULT_DELAY,
+                     burst: int = DEFAULT_BURST, pause: float = DEFAULT_PAUSE) -> float:
+    """Wall-clock seconds for `tiles` requests, burst pauses included.
+
+    Ignoring the pauses understates a long run noticeably: at the defaults they
+    add five seconds every hundred tiles, which is a third again on top of the
+    spacing itself."""
+    if tiles <= 0:
+        return 0.0
+    seconds = tiles * delay
+    if burst > 0:
+        seconds += ((tiles - 1) // burst) * pause
+    return seconds
+
+
 THROTTLE_CODES = {429, 500, 502, 503, 504}
 MAX_ATTEMPTS = 4
 MAX_BACKOFF = 60.0
@@ -238,11 +262,11 @@ def main() -> int:
     ap.add_argument("--max-zoom", type=int, default=15)
     ap.add_argument("--out", type=Path,
                     default=Path.home() / DATA_DIR_NAME / "Offline_Maps" / "Offline_Tiles")
-    ap.add_argument("--burst", type=int, default=100,
+    ap.add_argument("--burst", type=int, default=DEFAULT_BURST,
                     help="requests between pauses; 0 disables bursting")
-    ap.add_argument("--pause", type=float, default=5.0,
+    ap.add_argument("--pause", type=float, default=DEFAULT_PAUSE,
                     help="seconds to pause between bursts")
-    ap.add_argument("--delay", type=float, default=0.15,
+    ap.add_argument("--delay", type=float, default=DEFAULT_DELAY,
                     help="seconds between requests; be polite to the tile server (default 0.1)")
     ap.add_argument("--timeout", type=int, default=30)
     ap.add_argument("--user-agent", default=DEFAULT_UA)
@@ -272,11 +296,13 @@ def main() -> int:
     zooms = range(args.min_zoom, args.max_zoom + 1)
 
     total = count_tiles(area, zooms)
-    approx_mb = total * 25 / 1024          # ~25 KB/tile is a reasonable rule of thumb
+    approx_mb = total * KB_PER_TILE / 1024
     print(f"area   : N{area['north']} S{area['south']} W{area['west']} E{area['east']}")
     print(f"layer  : {args.layer} — {SOURCES[args.layer][1]}")
     print(f"zooms  : {args.min_zoom}-{args.max_zoom}")
-    print(f"tiles  : {total:,}  (~{approx_mb:,.0f} MB, ~{total * args.delay / 60:,.0f} min at {args.delay}s spacing)")
+    est_min = estimate_seconds(total, args.delay, args.burst, args.pause) / 60
+    print(f"tiles  : {total:,}  (~{approx_mb:,.0f} MB, ~{est_min:,.0f} min "
+          f"at {args.delay}s spacing, {args.burst}/{args.pause}s bursts)")
     print(f"out    : {args.out / args.layer}")
 
     if args.estimate_only:
