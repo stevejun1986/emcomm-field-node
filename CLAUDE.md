@@ -23,6 +23,30 @@ exercised end to end without a VM and, for the dock automation, the physical
 hardware — so "tests pass" and "this works" are different claims and should not
 be written as if they were the same one.
 
+### Pull request bodies
+
+Write the body as technical documentation. Three sections, in this order:
+
+**WHAT** — the change, stated as fact.
+
+**WHY** — the defect, constraint or requirement that made it necessary, with
+evidence: the failing output, the measurement, the contradiction between two
+files. A claim with no evidence under WHY is an assertion, and the next reader
+cannot check it.
+
+**THE FIX** — what was done, and any structural decision worth recording — why
+a constant was centralised rather than corrected in place, why a rename was
+chosen over an exclusion list.
+
+Close with what was verified and what was not.
+
+Omit second-person address, pleasantries, and narration of the author's process.
+`Your screenshot showed the total mislabelled` is `The estimate labelled the sum
+"both layers" while each row already counted every layer`. `I fixed it
+structurally` is `Pacing defaults are defined once in the fetcher and imported
+by the GUI`. The body is a record for whoever reads the log in a year with no
+access to the conversation that produced it.
+
 ---
 
 ## The failure mode this project keeps producing
