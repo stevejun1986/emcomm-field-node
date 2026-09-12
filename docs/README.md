@@ -14,7 +14,7 @@ Commonly useful for an EMCOMM node:
 * Equipment manuals for the radios and interfaces actually deployed
 * Public-domain or open-licensed field references
 
-Check the licence before adding anything. "Freely downloadable" is not the same
+Check the license before adding anything. "Freely downloadable" is not the same
 as "redistributable" — several widely circulated manuals are neither.
 
 Keep filenames descriptive; the document server presents a plain directory index,

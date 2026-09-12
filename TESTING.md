@@ -70,7 +70,7 @@ checksum. If a step is not safely re-runnable, that is a bug worth reporting.
 * **The Kiwix URL is pinned** to a dated snapshot and will 404 once upstream
   rotates it. Pick a current file and update the URL and hash.
 * **The SatDump hash is pinned** to one package version. A different `.deb` is
-  refused until the expected hash is updated — correct behaviour, not a bug.
+  refused until the expected hash is updated — correct behavior, not a bug.
 
 ## Reporting a failure
 
@@ -85,8 +85,8 @@ machine, since several failures only appear on a second run.
 ```bash
 python3 tests/dryrun.py     # every step, nothing installed
 python3 tests/flow.py       # the five screens and verification wiring
-python3 tests/area.py       # centre/radius input, the estimate, the file it writes
-python3 tests/throttle.py   # pacing, backoff, and behaviour when rate-limited
+python3 tests/area.py       # center/radius input, the estimate, the file it writes
+python3 tests/throttle.py   # pacing, backoff, and behavior when rate-limited
 ```
 
 `tests/flow.py` needs Tk (`sudo apt install python3-tk`) and a display. On a
@@ -104,7 +104,7 @@ that does not exist, a fetch invoked with arguments it rejects, a green summary
 line sitting outside the branch that earned it. All of those are invisible on a
 real machine until someone needs the radio.
 
-It does not cover runtime behaviour — real downloads, real archive extraction,
+It does not cover runtime behavior — real downloads, real archive extraction,
 real `apt`. A VM run is still required before any deployment.
 
 `tests/flow.py` additionally asserts that **every screen fits a 1024x768 panel** —

@@ -14,4 +14,4 @@ source, which works but takes considerably longer.
 **Verify what you cache.** The provisioner checks a SHA-256 for the SatDump
 package before installing it. If you drop in a different version, update the
 expected hash in the provisioner to match, or the step will refuse to install it
-— which is the correct behaviour, not a bug to work around.
+— which is the correct behavior, not a bug to work around.

@@ -3,13 +3,13 @@
 Items that cannot be verified by the provisioner and must be confirmed against
 real hardware and your group's plan before a node is considered deployable.
 
-## 1. Callsign and Licence
+## 1. Callsign and License
 The callsign entered at provisioning is written into the JS8Call profile as MyCall
 and into the Direwolf config as MYCALL.
 
 Confirm:
     - the callsign is real, current, and belongs to the operator of THIS node
-    - the operator holds the class of licence required for the modes enabled
+    - the operator holds the class of license required for the modes enabled
     - no node ships with a placeholder still in place
 
 Verify with:
@@ -49,16 +49,25 @@ Confirm PTT actually keys the radio, into a dummy load, before relying on it.
 If CM108 fails, a serial RTS/DTR PTT interface is the usual fallback.
 
 ## 5. Operating Area Map Tiles (scripts/fetch_map_tiles.py)
-The tile fetcher needs a bounding box for YOUR operating area. Do not ship one
-group's area to another group, and do not commit an area you would rather not
-publish.
+Selecting the map step adds an Operating Area screen: a center point in decimal
+degrees and a radius of 50, 75 or 150 miles. It writes configs/areas/<node>-area.json
+and shows the tile count, size and time before anything downloads.
+
+Tiles are tiered — full street detail within 25 miles, orientation zoom to the
+full radius. Coverage scales with the square of the radius, so a flat fetch at
+street zoom across 150 miles would be roughly 694,000 tiles against a public
+USGS endpoint.
+
+Do not ship one group's area to another group, and do not commit an area you
+would rather not publish; configs/areas/*.json is gitignored for that reason.
 
 Confirm:
-    - the bounding box covers your actual response area
-    - the zoom range is deep enough to be useful but small enough to fit on disk
-    - tiles land under ~/EMCOMM_Data/Offline_Maps/Offline_Tiles/
+    - the center and radius cover your actual response area
+    - the estimate fits the disk you have, before starting the download
+    - tiles land under ~/EMCOMM_Data/Offline_Maps/Offline_Tiles/<layer>/
+    - no leftover configs/areas/example-area.json is present from an older clone
 
-## 6. Time Sync Behaviour
+## 6. Time Sync Behavior
 Digital modes are timing-sensitive; JS8Call in particular needs the clock close
 to correct. The dock-trigger autostart waits up to 15s for chrony to report a
 normal leap status, then continues regardless.
@@ -72,15 +81,19 @@ Autostart waits up to 10s for /dev/ttyUSB* or /dev/ttyACM* before launching the
 digital-mode applications. Confirm your interface enumerates within that window
 after a cold boot, or raise the ceiling.
 
-## 8. Dock Trigger (optional — skip if you have no dock)
-The udev rule ships with a PLACEHOLDER vendor/product ID. It will not match your
-hardware as-is.
+## 8. Dock Trigger (Havis DS-PAN-111 + CF-30 only)
+The udev rule matches the Havis DS-PAN-111 dock's USB hub, 05e3:0610. That is a
+real ID, not a placeholder — it is the reference hardware this package targets.
 
-Find yours:
+On any other dock it will not match, the rule never fires, and nothing
+autostarts on dock. Leave the step unchecked.
+
+To port it to different hardware, find your own dock's IDs:
     udevadm monitor --environment --udev
 (then dock/undock and read the actual idVendor/idProduct)
 
-Update 99-dock-trigger.rules, or leave this step unchecked entirely.
+Update 99-dock-trigger.rules with those values. That is a port, and verifying it
+is on you.
 
 ## 9. Meshtastic Net Parameters
 Region, preset and channel must match across every node in the group or they
