@@ -122,6 +122,16 @@ happening, be gentler:
     --delay 0.5 --burst 50 --pause 30
 ```
 
+Every area found is named in the log before any download starts, so a file you
+did not expect is visible before it costs you anything.
+
+A `*.json` carrying the sample's bounds **unchanged** is skipped with a warning.
+A clone predating the `.json.sample` rename leaves a real `example-area.json`
+behind, and `areas/*.json` is gitignored so `git status` never mentions it —
+without the check it is fetched in silence, ahead of your own area. Editing its
+bounds makes it a legitimate area again; the check compares coordinates, not
+filenames.
+
 `example-area.json.sample` is a sample around Washington DC, deliberately chosen
 as a neutral public reference. **Copy it to `<your-area>.json` and edit the copy** —
 do not edit the sample in place. It carries the `.sample` suffix so it is never

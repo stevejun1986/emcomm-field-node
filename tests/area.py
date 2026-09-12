@@ -138,4 +138,55 @@ assert f.winfo_reqwidth() <= CF30_W - 40 and f.winfo_reqheight() <= CF30_H - 90,
     (f.winfo_reqwidth(), f.winfo_reqheight())
 print("OK: area screen fits a CF-30 panel (%d x %d)" % (f.winfo_reqwidth(), f.winfo_reqheight()))
 app.destroy()
+
+# --- a stale copy of the shipped sample must not be fetched -------------
+# A clone predating the .json.sample rename leaves a real example-area.json on
+# disk. configs/areas/*.json is gitignored, so git never mentions it and it is
+# fetched in silence: someone else's city, at full detail, ahead of the
+# operator's own area. Observed on a live run.
+sample_spec = json.loads((REPO / "configs" / "areas" / "example-area.json.sample").read_text())
+assert mod.is_unmodified_sample(sample_spec), "the sample itself must be recognised"
+print("OK: an unmodified sample copy is recognised by its bounds")
+
+edited = dict(sample_spec); edited["north"] = round(edited["north"] + 0.5, 6)
+assert not mod.is_unmodified_sample(edited), "an edited sample is a real area"
+print("OK: editing the bounds makes it a legitimate area again")
+
+assert not mod.is_unmodified_sample({"center": {"lat": 1, "lon": 2}, "radius_miles": 50})
+assert not mod.is_unmodified_sample({"nonsense": True})
+print("OK: centre/radius areas and malformed specs are not mistaken for it")
+
+# end to end: a stale file present alongside a real one is skipped, not fetched
+import types, shutil as _sh
+with tempfile.TemporaryDirectory() as td:
+    areas = Path(td) / "areas"; areas.mkdir()
+    _sh.copy(REPO / "configs" / "areas" / "example-area.json.sample", areas / "example-area.json")
+    (areas / "real-area.json").write_text(json.dumps(
+        {"center": {"lat": 34.06, "lon": -117.55}, "radius_miles": 50}))
+    old_dir = mod.AREA_DIR
+    mod.AREA_DIR = areas
+    logs, cmds = [], []
+    ctx = types.SimpleNamespace(
+        home=Path(td), user="op", node_id="N0CALL-1", data_dir=Path(td) / "data",
+        log=lambda m, l="info": logs.append((l, m)),
+        run=lambda cmd, **k: (cmds.append(cmd), types.SimpleNamespace(returncode=0))[1],
+        spin=mod.Ctx.spin.__get__(types.SimpleNamespace(
+            cancel_check=lambda: None, spin_start=lambda l: None,
+            spin_stop=lambda ok: None), object))
+    try:
+        mod.step_maps_fetch(ctx)
+    finally:
+        mod.AREA_DIR = old_dir
+    fetched = {c[c.index("--layer") - 1] if "--layer" in c else "" for c in cmds}
+    joined = " ".join(" ".join(map(str, c)) for c in cmds)
+    assert "example-area" not in joined, "the stale sample was fetched"
+    assert any("real-area" in m or "real-area" in str(m) for _l, m in logs) or cmds, logs
+    assert any("shipped sample's bounds unchanged" in m for _l, m in logs), logs
+    assert any("Operating area(s) found" in m for _l, m in logs), logs
+    assert len(cmds) == 4, "the real area should still run 2 passes x 2 layers: %d" % len(cmds)
+    print("OK: stale sample skipped with a reason; the real area still fetched (%d passes)" % len(cmds))
+    for lvl, m in logs:
+        if lvl in ("warn", "info"):
+            print("     [%s] %s" % (lvl, m[:96]))
+
 print("\nAREA: ALL ASSERTIONS PASSED")
