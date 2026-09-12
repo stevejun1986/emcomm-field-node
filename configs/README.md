@@ -105,6 +105,23 @@ The bounding box is the outer ring, kept so the fetcher can still be pointed at
 the file directly with `--area`. A file with only `north/south/east/west` is a
 plain rectangle and gets a single full-detail pass.
 
+### Being a good neighbour to the tile service
+
+The tiles come from a public USGS endpoint. The fetcher paces **every** request
+(`--delay`, default 0.15s), pauses between bursts (`--burst 100 --pause 5`), and
+backs off exponentially on 429/503 — honouring `Retry-After` when the server
+sends one. After ten consecutive throttle responses it **stops** and tells you,
+rather than grinding out thousands of failures against a service that has
+repeatedly said no.
+
+Everything already fetched is kept, so re-running fills the gaps. If it keeps
+happening, be gentler:
+
+```bash
+./scripts/fetch_map_tiles.py --area configs/areas/your-area.json \
+    --delay 0.5 --burst 50 --pause 30
+```
+
 `example-area.json.sample` is a sample around Washington DC, deliberately chosen
 as a neutral public reference. **Copy it to `<your-area>.json` and edit the copy** —
 do not edit the sample in place. It carries the `.sample` suffix so it is never

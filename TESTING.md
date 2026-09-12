@@ -86,6 +86,7 @@ machine, since several failures only appear on a second run.
 python3 tests/dryrun.py     # every step, nothing installed
 python3 tests/flow.py       # the five screens and verification wiring
 python3 tests/area.py       # centre/radius input, the estimate, the file it writes
+python3 tests/throttle.py   # pacing, backoff, and behaviour when rate-limited
 ```
 
 `tests/flow.py` needs Tk (`sudo apt install python3-tk`) and a display. On a
