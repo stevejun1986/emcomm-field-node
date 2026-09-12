@@ -1954,12 +1954,16 @@ class ProvisionerGUI(tk.Tk):
             n = tf.count_tiles(box, range(zmin, zmax + 1)) * len(MAP_LAYERS)
             total += n
             lines.append(f"  {desc:<16} z{zmin}-{zmax}   {n:>8,} tiles")
-        mb = total * 25 / 1024
-        mins = total * 0.1 / 60
-        lines.append(f"  {'both layers':<16}          {total:>8,} tiles"
+        mb = total * tf.KB_PER_TILE / 1024
+        mins = tf.estimate_seconds(total) / 60
+        # "total", not "both layers": each row above already counts every layer,
+        # so labelling the sum that way reads as though the rows were per-layer.
+        lines.append(f"  {'total':<16}          {total:>8,} tiles"
                      f"   ~{mb:,.0f} MB   ~{mins:,.0f} min")
+        layers = " + ".join(layer for layer, _tms, _title in MAP_LAYERS)
         self.area_estimate.configure(
-            text=f"centre {lat:.2f}, {lon:.2f} — radius {radius} mi\n" + "\n".join(lines))
+            text=f"centre {lat:.2f}, {lon:.2f} — radius {radius} mi   "
+                 f"({layers}; every figure covers both)\n" + "\n".join(lines))
 
     def _on_area_continue(self):
         centre = self._parse_centre()
