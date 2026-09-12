@@ -105,11 +105,21 @@ The bounding box is the outer ring, kept so the fetcher can still be pointed at
 the file directly with `--area`. A file with only `north/south/east/west` is a
 plain rectangle and gets a single full-detail pass.
 
-### Being a good neighbour to the tile service
+### Download size
+
+The size figure the provisioner quotes assumes 25 KB per tile. That is measured,
+not guessed: 25.5 KB across 19,774 USGS tiles at z10-15 over mixed urban and
+mountain terrain — topo 24.6 KB, imagery 26.5 KB. The two layers are close
+enough that one constant covers both. Flat rural terrain compresses better and
+may come in under it.
+
+For reference, a 50-mile area with both layers came to roughly 493 MB on disk.
+
+### Being a good neighbor to the tile service
 
 The tiles come from a public USGS endpoint. The fetcher paces **every** request
 (`--delay`, default 0.15s), pauses between bursts (`--burst 100 --pause 5`), and
-backs off exponentially on 429/503 — honouring `Retry-After` when the server
+backs off exponentially on 429/503 — honoring `Retry-After` when the server
 sends one. After ten consecutive throttle responses it **stops** and tells you,
 rather than grinding out thousands of failures against a service that has
 repeatedly said no.
