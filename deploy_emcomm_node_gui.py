@@ -88,11 +88,13 @@ KNOWN LIMITATIONS
 
 from __future__ import annotations
 
+import datetime
 import getpass
 import hashlib
 import importlib.util
 import json
 import os
+import platform
 import queue
 import re
 import shutil
@@ -133,6 +135,7 @@ from typing import Callable, Optional
 PROJECT         = "emcomm"
 OPERATOR_PREFIX = "EMCOMM"
 STATE_DIR_NAME  = "." + PROJECT
+LOG_DIR_NAME    = STATE_DIR_NAME + "/logs"
 SYSTEM_DIR      = "/etc/" + PROJECT
 UNIT_PREFIX     = PROJECT
 
@@ -351,6 +354,153 @@ class AskpassSession:
 
     def close(self):
         self.path.unlink(missing_ok=True)
+
+
+class RunLog:
+    """A plain-text transcript of one provisioning run, written as it happens.
+
+    The GUI log pane is ephemeral. It dies with the window, and its failure
+    output is deliberately condensed so that 588 progress redraws cannot bury
+    the one line that says what actually went wrong. The file is the copy that
+    survives, and it is the UNCONDENSED one: every line the pane shows, plus
+    the complete captured output of every command that failed, plus the
+    verification rows and the final result.
+
+    A run that goes wrong on a field laptop has to be reportable as one path.
+    Reconstructing it from screenshots of a scrolled pane loses exactly the
+    part that matters, every time.
+
+    Nothing here raises. A transcript that cannot be written is reported once,
+    in the pane, and the deployment carries on. The log is diagnostic; losing
+    it must never cost the operator the node.
+    """
+
+    #: Level tag written into the file. Fixed width, so the message column
+    #: lines up and `grep FAIL` finds every failure in one pass.
+    TAGS = {"info": "INFO", "ok": " OK ", "warn": "WARN", "err": "FAIL",
+            "spin": " >> ", "head": "----"}
+    KEEP = 10          # run logs retained; older ones are pruned on open
+
+    def __init__(self, directory: Path):
+        self.path: Optional[Path] = None
+        self.error: Optional[str] = None
+        self.started = datetime.datetime.now()
+        self._fh = None
+        try:
+            directory.mkdir(parents=True, exist_ok=True)
+            path = directory / self.started.strftime("provision-%Y%m%d-%H%M%S.log")
+            # Line buffered. A run killed part-way through -- power loss on
+            # battery, a hard reboot, the lid closed on a laptop mid-install --
+            # still leaves everything up to the last line on disk, and that is
+            # precisely the run whose log is worth having.
+            self._fh = path.open("w", encoding="utf-8", errors="replace", buffering=1)
+            self.path = path
+        except Exception as e:      # noqa: BLE001 -- see the class docstring
+            self.error = str(e)
+            return
+        self._prune(directory)
+
+    def _prune(self, directory: Path):
+        """Keep the newest KEEP logs. A node reprovisioned repeatedly should
+        not accumulate transcripts in a hidden directory nobody opens."""
+        try:
+            logs = sorted(directory.glob("provision-*.log"))
+            for old in logs[:-self.KEEP]:
+                old.unlink(missing_ok=True)
+        except Exception:      # noqa: BLE001
+            pass                    # tidying is optional; logging is not
+
+    # -- writing --------------------------------------------------------
+    def write(self, message: str, level: str = "info"):
+        """One timestamped, tagged entry. Multi-line messages get a timestamp
+        on every line, so the file stays sortable and greppable by time."""
+        tag = self.TAGS.get(level, "INFO")
+        stamp = datetime.datetime.now().strftime("%H:%M:%S")
+        self._emit("".join("%s [%s] %s\n" % (stamp, tag, line)
+                           for line in message.split("\n")))
+
+    def raw(self, text: str):
+        """A verbatim block -- captured output of a command, kept exactly as
+        the command emitted it. Indented into a gutter so it is visibly not a
+        line the provisioner wrote, but otherwise untouched: no condensing, no
+        truncation. This is the whole point of the file."""
+        self._emit("".join("             | %s\n" % line
+                           for line in text.rstrip("\n").split("\n")))
+
+    def banner(self, text: str):
+        """Header/footer block, written without timestamps."""
+        self._emit(text if text.endswith("\n") else text + "\n")
+
+    def _emit(self, text: str):
+        if self._fh is None:
+            return
+        try:
+            self._fh.write(text)
+        except Exception as e:      # noqa: BLE001 -- see the class docstring
+            # Out of disk is a real field condition, and it is not the only
+            # way a handle goes bad. Whatever it was, record why the transcript
+            # stops and stop trying: this class exists to describe a failing
+            # run, so it must not become one.
+            self.error = str(e)
+            self.close()
+
+    def close(self):
+        if self._fh is None:
+            return
+        try:
+            self._fh.close()
+        except Exception:      # noqa: BLE001 -- closing must not raise either
+            pass
+        self._fh = None
+
+    # -- header / footer ------------------------------------------------
+    def header(self, node_id: str, user: str, selected: list, skipped: list):
+        try:
+            pretty = next((l.split("=", 1)[1].strip().strip('"')
+                           for l in Path("/etc/os-release").read_text().splitlines()
+                           if l.startswith("PRETTY_NAME=")), "unknown")
+        except OSError:
+            pretty = "unknown"
+        uname = os.uname()
+        lines = [
+            "=" * 72,
+            "%s Field Node provisioner -- run log" % OPERATOR_PREFIX,
+            "=" * 72,
+            "Started    : %s" % self.started.strftime("%Y-%m-%d %H:%M:%S %Z").strip(),
+            "Node ID    : %s" % node_id,
+            "User       : %s" % user,
+            "Host       : %s -- %s" % (uname.nodename, pretty),
+            "Kernel     : %s %s" % (uname.sysname, uname.release),
+            "Python     : %s (%s)" % (platform.python_version(), sys.executable),
+            "Script     : %s" % Path(__file__).resolve(),
+            # The provisioner reads configs/, docs/ and scripts/ by RELATIVE
+            # path, so a run launched from the wrong directory finds none of
+            # them and warns its way to a hollow node. Record where it ran.
+            "Working dir: %s" % os.getcwd(),
+            "",
+            "Steps selected (%d of %d):" % (len(selected), len(selected) + len(skipped)),
+        ]
+        lines += ["    %s" % label for label in selected] or ["    (none)"]
+        lines += ["", "Steps skipped (%d):" % len(skipped)]
+        lines += ["    %s" % label for label in skipped] or ["    (none)"]
+        lines += ["=" * 72, ""]
+        self.banner("\n".join(lines))
+
+    def footer(self, title: str, ran: int, skipped: int, failed_steps: list,
+               passed: int, warned: int, failed: int):
+        end = datetime.datetime.now()
+        lines = ["", "=" * 72, "RESULT: %s" % title,
+                 "    %d step(s) run, %d skipped" % (ran, skipped)]
+        if failed_steps:
+            lines.append("    %d step(s) failed:" % len(failed_steps))
+            lines += ["        %s" % label for label in failed_steps]
+        lines.append("Verification: %d passed, %d warning(s), %d failed"
+                     % (passed, warned, failed))
+        lines.append("Finished: %s  (elapsed %s)"
+                     % (end.strftime("%Y-%m-%d %H:%M:%S"),
+                        str(end - self.started).split(".")[0]))
+        lines += ["=" * 72, ""]
+        self.banner("\n".join(lines))
 
 
 @dataclass
@@ -1785,6 +1935,7 @@ class ProvisionerGUI(tk.Tk):
         self.cancel_event = threading.Event()
         self.worker: Optional[threading.Thread] = None
         self.askpass: Optional[AskpassSession] = None
+        self.runlog: Optional[RunLog] = None
         self.component_vars: dict[str, tk.BooleanVar] = {}
 
         # Spinner state — all touched only from the main (Tk) thread, via
@@ -1828,6 +1979,11 @@ class ProvisionerGUI(tk.Tk):
 
     # -- spinner: animated "in progress" log line ------------------------
     def _spin_start(self, label: str):
+        # The file gets a line when the work starts AND when it resolves. The
+        # pane redraws one animated line in place; the file cannot, and the
+        # start line is what localises a run that hung rather than failed.
+        if self.runlog:
+            self.runlog.write(label, "spin")
         self.log_widget.configure(state="normal")
         self._spin_line = int(self.log_widget.index("end-1c").split(".")[0])
         self._spin_label = label
@@ -1847,6 +2003,8 @@ class ProvisionerGUI(tk.Tk):
         self._spin_after_id = self.after(self.SPIN_INTERVAL_MS, self._spin_tick)
 
     def _spin_stop(self, ok: bool):
+        if self.runlog and self._spin_label:
+            self.runlog.write(self._spin_label, "ok" if ok else "err")
         self._spin_active = False
         if self._spin_after_id is not None:
             self.after_cancel(self._spin_after_id)
@@ -2323,10 +2481,25 @@ class ProvisionerGUI(tk.Tk):
             self._build_run_screen()
         self._show("run")
 
+        node_id = self.node_id_var.get().strip()
+        user = _current_user()
+        self.runlog = RunLog(Path.home() / LOG_DIR_NAME)
+        if self.runlog.path:
+            selected = [c.label for c in COMPONENTS if c.id in self.selected_ids]
+            skipped = [c.label for c in COMPONENTS if c.id not in self.selected_ids]
+            self.runlog.header(node_id, user, selected, skipped)
+            # Announced before the first step, not only on the summary: a run
+            # that has to be killed part-way still tells the operator where the
+            # transcript is.
+            self._append_log("Run log: %s" % self.runlog.path, "info")
+        else:
+            self._append_log("[!] Could not open a run log (%s) \u2014 continuing; "
+                             "this screen is the only record." % self.runlog.error, "warn")
+
         ctx = Ctx(
             home=Path.home(),
-            user=_current_user(),
-            node_id=self.node_id_var.get().strip(),
+            user=user,
+            node_id=node_id,
             askpass=self.askpass,
             log=self._queue_log,
             cancel_check=self._cancel_check,
@@ -2405,10 +2578,28 @@ class ProvisionerGUI(tk.Tk):
                          % (len(problems) - 12))
             t.insert("end", "\n")
 
+        t.insert("end", "Run log\n", "head")
+        if self.runlog and self.runlog.path:
+            t.insert("end", "    %s\n" % self.runlog.path)
+            t.insert("end", "    Full command output for anything that failed is in there,\n"
+                            "    uncondensed. Attach it when reporting a problem.\n")
+        else:
+            t.insert("end", "    not written \u2014 %s\n"
+                     % (self.runlog.error if self.runlog else "no run started"), "warn")
+        t.insert("end", "\n")
+
         t.insert("end", "Next\n", "head")
         t.insert("end", "    Work through 'Pre-Deployment Config Checklist' in the repo root \u2014\n"
                         "    it covers what this tool cannot check without real hardware.\n")
         t.configure(state="disabled")
+
+        # The summary is the last thing written. Close the file here rather
+        # than at window teardown, so the transcript is complete and flushed
+        # the moment the operator can read the path to it.
+        if self.runlog:
+            self.runlog.footer(title, len(ran), skipped, self.failed_steps,
+                               passed, warned, failed)
+            self.runlog.close()
 
     def _on_cancel(self):
         if messagebox.askyesno("Cancel provisioning",
@@ -2425,6 +2616,11 @@ class ProvisionerGUI(tk.Tk):
             self.cancel_event.set()
         if self.askpass:
             self.askpass.close()
+        if self.runlog:
+            # Quitting before the summary screen: whatever was written stays,
+            # flushed and closed rather than left to the interpreter.
+            self.runlog.write("=== Window closed before the summary screen ===", "warn")
+            self.runlog.close()
         self.destroy()
 
     # -- worker thread ------------------------------------------------------
@@ -2511,9 +2707,19 @@ class ProvisionerGUI(tk.Tk):
         output = (e.output or "").rstrip()
         if not output:
             return
-        lines = self._condense(output.splitlines())
+        # Two audiences, two treatments. The pane gets a condensed tail
+        # because an operator reading it under stress needs the error, not
+        # 588 progress redraws. The file gets every byte the command emitted,
+        # because whoever diagnoses this afterwards needs the part the
+        # condensing threw away. Queued rather than written here: the worker
+        # thread must not touch the log file the UI thread is writing.
+        raw = output.splitlines()
+        self.msg_queue.put(("log_file",
+                            "--- full captured output (%d line(s)) ---" % len(raw), output))
+        lines = self._condense(raw)
         if len(lines) > 40:
-            self._queue_log(f"  ... ({len(lines) - 40} earlier line(s) omitted) ...", "err")
+            self._queue_log(f"  ... ({len(lines) - 40} earlier line(s) omitted \u2014 "
+                            f"the run log has them all) ...", "err")
             lines = lines[-40:]
         for line in lines:
             self._queue_log(f"  {line}", "err")
@@ -2538,6 +2744,12 @@ class ProvisionerGUI(tk.Tk):
                 if kind == "log":
                     _, message, level = item
                     self._append_log(message, level)
+                elif kind == "log_file":
+                    # File only. The pane already has the condensed version.
+                    _, heading, block = item
+                    if self.runlog:
+                        self.runlog.write(heading, "err")
+                        self.runlog.raw(block)
                 elif kind == "spin_start":
                     _, label = item
                     self._spin_start(label)
@@ -2588,12 +2800,17 @@ class ProvisionerGUI(tk.Tk):
         for row in self.verify_tree.get_children():
             self.verify_tree.delete(row)
         self.verify_title.configure(text="Verifying deployment\u2026")
+        if self.runlog:
+            self.runlog.write("===== Verification =====", "info")
         self.verify_continue_btn.configure(state="disabled")
         self.close_btn.configure(text="Continue \u2192")
         self._show("verify")
 
     def _add_verify_row(self, result):
         self.check_results.append(result)
+        if self.runlog:
+            self.runlog.write("%s \u2014 %s" % (result.label, result.detail),
+                              {"pass": "ok", "warn": "warn"}.get(result.status, "err"))
         glyph = {"pass": "\u2714", "warn": "!", "fail": "\u2716"}.get(result.status, "?")
         self.verify_tree.insert("", "end", values=(glyph, result.label, result.detail),
                                  tags=(result.status,))
@@ -2612,6 +2829,8 @@ class ProvisionerGUI(tk.Tk):
         self.verify_continue_btn.configure(state="normal")
 
     def _append_log(self, message: str, level: str):
+        if self.runlog:
+            self.runlog.write(message, level)
         self.log_widget.configure(state="normal")
         self.log_widget.insert("end", message + "\n", level)
         self.log_widget.see("end")

@@ -58,7 +58,7 @@ branch that earned it, `.tms` map sources pointing at a directory the fetcher
 never writes to. Every one was invisible on the bench and would have been found in
 the field, by an operator who needed the radio.
 
-Three rules follow. They are not style preferences.
+Five rules follow. They are not style preferences.
 
 1. **An input that might be absent is always reported.** A positive-form guard
    (`if src.is_file():`) needs an `else` that warns; an early return
@@ -78,13 +78,19 @@ Three rules follow. They are not style preferences.
    placeholder tokens, then verify the token is gone. A file that copies cleanly
    but substitutes nothing is used verbatim as a real value, which is worse than
    a missing setting.
-
 4. **A failing step is contained, never fatal to the run.** The steps are
    independent by design, so an exception escaping one of them and aborting the
    other twelve is a bug, not caution. Report it by name and continue. This has
    happened: a Flatpak install failed at step 4 of 13 and the operator lost
    maps, profiles, the dock trigger, Direwolf, Meshtastic and SatDump — none of
    which had anything to do with it.
+5. **Condensing output is a display decision, and only a display decision.** The
+   log pane collapses runs of progress redraws so the error is not buried under
+   588 of them. The run log on disk never does: it keeps the complete captured
+   output of every failed command. Route the file through the pane's condensing
+   and the diagnosis loses exactly the lines it was condensed to hide — with no
+   sign that anything is missing, which is this whole section's failure mode
+   wearing a different hat. `tests/runlog.py` asserts the two diverge.
 
 Before committing a change to any step, run `python3 tests/dryrun.py` and read the
 transcript for exactly this.
@@ -153,12 +159,19 @@ QMapShack opened the sources onto nothing. Never hardcode a layer directory.
 ```bash
 python3 tests/dryrun.py     # every step, subprocess and network stubbed
 python3 tests/flow.py       # five screens, verification wiring, panel size
+python3 tests/area.py       # center/radius input, the estimate, the file it writes
+python3 tests/throttle.py   # pacing, backoff, behavior when rate-limited
+python3 tests/build.py      # build parallelism capped by memory, not cores
+python3 tests/isolation.py  # one failing step must not stop the others
+python3 tests/runlog.py     # the transcript on disk, and that it is the complete one
 ```
 
 `tests/dryrun.py` is a **diagnostic harness, not an assertion suite** — it prints
 what each step would do, for a human to read. That is the right shape here: the
 bug class is "reported success, did nothing", which you catch by reading a
-transcript. `tests/flow.py` does assert, and fails loudly.
+transcript. Every other suite asserts, and fails loudly. The ones that build a
+window (`flow`, `area`, `isolation`, `runlog`) need Tk and a display — headless, prefix
+them with `xvfb-run -a`.
 
 Neither covers runtime behavior — real `apt`, real downloads, real extraction.
 A VM run is required before any deployment, and the hardware claims need the

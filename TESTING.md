@@ -82,9 +82,30 @@ checksum. If a step is not safely re-runnable, that is a bug worth reporting.
 
 ## Reporting a failure
 
-Include the step name, the red `✖` line, and the captured output beneath it —
-that block is the actual error. Note whether the step had been run before on that
-machine, since several failures only appear on a second run.
+**Send the run log.** Every run writes one:
+
+```
+~/.emcomm/logs/provision-<date>-<time>.log
+```
+
+Its path is printed as the first line of the run screen and again on the summary
+screen. It holds every line the log pane showed, the verification rows, the final
+result — and, for anything that failed, the **complete** captured output of the
+command, not the condensed version the pane displays. That last part is the whole
+reason the file exists: the pane collapses runs of progress redraws so the error
+is not buried under them, and the lines it collapses are sometimes the ones that
+explain the failure.
+
+The newest ten logs are kept; older ones are pruned when a new run starts.
+
+**Read one before you send it.** The header records the callsign, the hostname,
+the user and absolute `/home/<user>/` paths, and the captured output can carry
+more of the same. That is the data this repository has already had to scrub out
+of its own history once — a log pasted into an issue puts it straight back.
+
+If the log is unavailable, include the step name, the red `✖` line, and the
+captured output beneath it. Either way, note whether the step had been run before
+on that machine, since several failures only appear on a second run.
 
 ---
 
@@ -97,11 +118,14 @@ python3 tests/area.py       # center/radius input, the estimate, the file it wri
 python3 tests/throttle.py   # pacing, backoff, and behavior when rate-limited
 python3 tests/build.py      # build parallelism capped by memory, not cores
 python3 tests/isolation.py  # one failing step must not stop the others
+python3 tests/runlog.py     # the transcript on disk, and that it is the complete one
 ```
 
-`tests/flow.py` needs Tk (`sudo apt install python3-tk`) and a display. On a
-desktop session it just runs; headless, prefix it with `xvfb-run -a`. Both
-scripts work from the repository root or from inside `tests/`.
+`tests/flow.py`, `tests/area.py`, `tests/isolation.py` and `tests/runlog.py` need Tk
+(`sudo apt install python3-tk`) and a display. On a desktop session they just
+run; headless, prefix them with `xvfb-run -a`. All of them work from the
+repository root or from inside `tests/`, and none writes outside a throwaway
+`$HOME`.
 
 Runs the real step functions with `subprocess`, downloads and `shutil.which`
 replaced by recorders, against a throwaway `$HOME`. Nothing is installed and

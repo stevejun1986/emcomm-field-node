@@ -9,10 +9,13 @@ trigger, Direwolf, Meshtastic and SatDump were all absent from a node whose
 operator had selected them, and the verification screen reported 14 failures
 that were consequences of the abort rather than faults of their own.
 """
-import os, sys, dataclasses, subprocess, types
+import os, sys, dataclasses, subprocess, tempfile, types
 from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 os.chdir(REPO); sys.path.insert(0, str(REPO))
+# A run writes a transcript under $HOME. Point that somewhere disposable so the
+# tests never leave files in the home directory of whoever ran them.
+os.environ["HOME"] = tempfile.mkdtemp(prefix="isolation-home-")
 import deploy_emcomm_node_gui as mod
 
 # --- progress-bar condensing --------------------------------------------
