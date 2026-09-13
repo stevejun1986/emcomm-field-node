@@ -103,12 +103,26 @@ import subprocess
 import sys
 import tempfile
 import threading
-import tkinter as tk
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from tkinter import messagebox, scrolledtext, ttk
 from typing import Callable, Optional
+
+# Tk is not bundled with Python on Debian, Ubuntu or Mint, and without it this
+# script cannot start at all. Unguarded, that arrives as a ModuleNotFoundError
+# traceback: accurate, and useless to the operator it is aimed at. README.md and
+# TESTING.md both say to install it beforehand -- this says so at the one moment
+# the person who skipped that is actually looking.
+try:
+    import tkinter as tk
+    from tkinter import messagebox, scrolledtext, ttk
+except ImportError:
+    sys.exit(
+        "\nThis provisioner needs Tk, which Debian, Ubuntu and Mint do not bundle\n"
+        "with Python. Install it and run this again:\n"
+        "\n"
+        "    sudo apt install python3-tk\n"
+    )
 
 # ===========================================================================
 # Naming
