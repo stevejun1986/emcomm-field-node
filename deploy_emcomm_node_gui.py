@@ -1889,12 +1889,24 @@ def verify_deployment(ctx: Ctx, selected_ids: set) -> list:
 
     if "satdump" in selected_ids:
         built = home / APPS_DIR_NAME / "SatDump" / "build" / "satdump"
-        if shutil.which("satdump") or built.is_file():
-            add("SatDump available", "pass", shutil.which("satdump") or str(built))
+        binary = shutil.which("satdump") or (str(built) if built.is_file() else "")
+        if binary:
+            add("SatDump available", "pass", binary)
+            # The TLE set is staged inside the install step, after the build
+            # succeeds, so a failed build returns before reaching it and no step
+            # ever attempts to write this file. Checked only once a binary
+            # exists: otherwise the row reports a file nothing tried to create,
+            # which is a consequence of the failure above rather than a finding
+            # of its own.
+            #
+            # Both remaining cases still report. A failed `make install` leaves
+            # the build-tree binary, and a successful build with no TLE source
+            # under configs/ warns -- which on a node imaged from a populated
+            # configs/ is a real staging fault, not an absent optional.
+            want(home / ".config" / "satdump" / "satdump_tles.txt",
+                 "SatDump TLE set staged", hard=False)
         else:
             add("SatDump available", "fail", "no satdump binary found (package or build)")
-        want(home / ".config" / "satdump" / "satdump_tles.txt",
-             "SatDump TLE set staged", hard=False)
 
     # --- desktop -------------------------------------------------------
     if "desktop_shortcuts" in selected_ids:
