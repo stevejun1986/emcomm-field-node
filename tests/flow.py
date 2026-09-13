@@ -73,7 +73,33 @@ print("OK: verification populated — %d rows, %r" % (len(rows), app.verify_titl
 app._on_show_summary()
 body = app.summary_body.get("1.0", "end")
 assert "N0CALL" in body and "2 step(s) run" in body, body
-print("OK: summary rendered")
+assert "Provisioner: v%s" % mod.VERSION in body, body
+print("OK: summary rendered, reporting v%s" % mod.VERSION)
+
+# A bad run renders past the pane: the problem list caps at 12 rows but
+# failed_steps does not. Before the scrollbar this clipped silently -- no
+# scrollbar, no indication, no error -- and the rows lost were the failures.
+# Assert the overflow is reachable, not merely that it was written.
+kept = (app.check_results, app.failed_steps, app.run_outcome)
+app.check_results = [mod.CheckResult("Check %02d with a reasonably long label" % i,
+                                      "fail", "a detail string of the usual length")
+                     for i in range(20)]
+app.failed_steps = ["Step %d" % i for i in range(13)]
+app.run_outcome = "failed"
+app.runlog = None                      # the footer is already written and closed
+app._on_show_summary()
+app.update_idletasks()
+t = app.summary_body
+assert t.cget("yscrollcommand"), "summary pane has no scrollbar wired"
+assert t.yview()[1] < 1.0, "test case does not overflow; assertion proves nothing"
+t.yview_moveto(1.0); app.update_idletasks()
+last = t.index("end-2c").split(".")[0]
+assert t.dlineinfo("%s.0" % last) is not None, "bottom of a long summary is unreachable"
+app._on_show_summary(); app.update_idletasks()
+assert app.summary_body.yview()[0] == 0.0, "re-render did not return the pane to the top"
+print("OK: a long summary scrolls, and re-rendering returns to the top")
+app.check_results, app.failed_steps, app.run_outcome = kept
+app._on_show_summary()
 
 geo_w, geo_h = (int(n) for n in app.geometry().split("+")[0].split("x"))
 min_w, min_h = app.minsize()

@@ -2686,9 +2686,19 @@ class ProvisionerGUI(tk.Tk):
         self.summary_title = ttk.Label(f, text="", font=("TkDefaultFont", 14, "bold"))
         self.summary_title.pack(anchor="w", pady=(0, 12))
 
-        self.summary_body = tk.Text(f, height=16, wrap="word", relief="flat",
+        # Scrolled, not bare. The problem list caps at 12 rows but failed_steps
+        # does not, so a bad run can render past the pane -- and a Text without
+        # a scrollbar clips with no scrollbar, no indication and no error. The
+        # rows lost that way are the ones the operator most needs. Same wiring
+        # as the verification table, so the two panes behave alike.
+        body = ttk.Frame(f)
+        body.pack(fill="both", expand=True)
+        self.summary_body = tk.Text(body, height=16, wrap="word", relief="flat",
                                      background=self.cget("background"), state="disabled")
-        self.summary_body.pack(fill="both", expand=True)
+        sb = ttk.Scrollbar(body, orient="vertical", command=self.summary_body.yview)
+        self.summary_body.configure(yscrollcommand=sb.set)
+        sb.pack(side="right", fill="y")
+        self.summary_body.pack(side="left", fill="both", expand=True)
         self.summary_body.tag_configure("ok", foreground="#2e7d32")
         self.summary_body.tag_configure("warn", foreground="#b8860b")
         self.summary_body.tag_configure("err", foreground="#c0392b")
@@ -2926,6 +2936,10 @@ class ProvisionerGUI(tk.Tk):
         t.insert("end", "Next\n", "head")
         t.insert("end", "    Work through 'Pre-Deployment Config Checklist' in the repo root \u2014\n"
                         "    it covers what this tool cannot check without real hardware.\n")
+        # Revisiting from a later screen re-renders; without this the pane keeps
+        # wherever it was last scrolled to, which on a long summary is the middle
+        # of the problem list rather than the result.
+        t.yview_moveto(0.0)
         t.configure(state="disabled")
 
         # The summary is the last thing written. Close the file here rather
