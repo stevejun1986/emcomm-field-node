@@ -108,6 +108,11 @@ If the log is unavailable, include the step name, the red `✖` line, and the
 captured output beneath it. Either way, note whether the step had been run before
 on that machine, since several failures only appear on a second run.
 
+**Say which version it was.** `Provisioner: v1.0.0` on the summary screen, and a
+`Version` line in the log header. Without it a report cannot be matched to a
+tree — an operator running a tarball from a release and someone running a clone of
+`main` can hit the same symptom for different reasons.
+
 ---
 
 ## Dry run (no VM required)
