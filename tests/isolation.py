@@ -61,7 +61,7 @@ mod.COMPONENTS = [
     for c in mod.COMPONENTS]
 
 app = mod.ProvisionerGUI()
-app.node_id_var.set("WSNQ705")
+app.node_id_var.set("N0CALL")
 app._select_all_components()
 app.component_vars["maps_fetch"].set(False)     # skip the area screen
 app._on_continue_to_sudo()
@@ -91,7 +91,7 @@ app.destroy()
 
 # the summary must name the steps that failed, not merely say "problems"
 app2 = mod.ProvisionerGUI()
-app2.node_id_var.set("WSNQ705")
+app2.node_id_var.set("N0CALL")
 app2.failed_steps = ["QLog station log + ion2G HF ALE", "Offline knowledgebase (Kiwix ZIM)"]
 app2.run_outcome = "failed"
 app2.selected_ids = {c.id for c in mod.COMPONENTS}

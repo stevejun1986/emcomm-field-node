@@ -33,7 +33,7 @@ assert log.path is not None and log.path.exists(), log.error
 assert log.path.parent == TMP / "logs", log.path
 assert log.path.name.startswith("provision-") and log.path.name.endswith(".log"), log.path
 
-log.header("WSNQ705", "op", ["Core system packages", "Offline maps"], ["Kiwix ZIM"])
+log.header("N0CALL", "op", ["Core system packages", "Offline maps"], ["Kiwix ZIM"])
 log.write("plain line")
 log.write("all good", "ok")
 log.write("careful", "warn")
@@ -42,7 +42,7 @@ log.write("two\nlines", "info")
 log.close()
 text = log.path.read_text()
 
-assert "WSNQ705" in text and "Steps selected (2 of 3):" in text, text
+assert "N0CALL" in text and "Steps selected (2 of 3):" in text, text
 assert "Core system packages" in text and "Kiwix ZIM" in text, text
 # The provisioner reads configs/ and docs/ by relative path, so the directory
 # it ran from is the difference between a real node and a hollow one.
@@ -118,7 +118,7 @@ mod.COMPONENTS = [dataclasses.replace(c, fn=boom if c.id == "qlog_ion2g" else fi
                   for c in mod.COMPONENTS]
 
 app = mod.ProvisionerGUI()
-app.node_id_var.set("WSNQ705")
+app.node_id_var.set("N0CALL")
 app._select_all_components()
 app.component_vars["maps_fetch"].set(False)      # skip the area screen
 app._on_continue_to_sudo()

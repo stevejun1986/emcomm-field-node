@@ -1034,23 +1034,39 @@ def step_maps_fetch(ctx: Ctx):
         for layer, _tms, _title in MAP_LAYERS:
             for desc, box, (zmin, zmax) in passes:
                 rc = 1
-                with ctx.spin(f"Fetching {layer} tiles, {desc}, for {area_path.stem}..."):
+                proc = None
+                with ctx.spin(f"Fetching {layer} tiles, {desc}, for {area_path.stem}...") as spin_result:
                     # Explicit bounds rather than re-deriving them in the child,
                     # and --yes because stdin is DEVNULL: the size confirmation
                     # would otherwise raise EOFError.
-                    rc = ctx.run([sys.executable, str(TILE_FETCHER),
-                                  "--north", str(box["north"]), "--south", str(box["south"]),
-                                  "--east", str(box["east"]), "--west", str(box["west"]),
-                                  "--layer", layer,
-                                  "--min-zoom", str(zmin), "--max-zoom", str(zmax),
-                                  "--out", str(tiles_dir), "--yes"],
-                                 check=False).returncode
+                    proc = ctx.run([sys.executable, str(TILE_FETCHER),
+                                    "--north", str(box["north"]), "--south", str(box["south"]),
+                                    "--east", str(box["east"]), "--west", str(box["west"]),
+                                    "--layer", layer,
+                                    "--min-zoom", str(zmin), "--max-zoom", str(zmax),
+                                    "--out", str(tiles_dir), "--yes"],
+                                   check=False)
+                    rc = proc.returncode
+                    spin_result.ok = (rc == 0)
                 if rc == 0:
                     ok_count += 1
                 else:
                     fail_count += 1
                     ctx.log(f"[!] Tile fetch failed: {area_path.stem} / {layer} / "
                             f"{desc} (exit {rc}).", "err")
+                    # The fetcher validates its own input and exits saying exactly
+                    # what is wrong -- "north must be greater than south",
+                    # "latitudes must be between -85 and 85". Keeping only the
+                    # return code threw that away and left the operator an exit
+                    # status against a multi-hour download. A fatal input error is
+                    # one "error:" line; anything else is progress, so show the
+                    # diagnosis when there is one and the tail when there is not.
+                    out = (proc.stdout or "").strip()
+                    if out:
+                        lines = out.splitlines()
+                        diag = [l for l in lines if l.lstrip().lower().startswith("error:")]
+                        for line in (diag or lines[-10:]):
+                            ctx.log(f"    {line}", "err")
 
     if ok_count and not fail_count:
         ctx.log(f"[+] Tiles fetched — {ok_count} pass(es) completed.", "ok")
@@ -1211,18 +1227,25 @@ def step_config_profiles(ctx: Ctx):
 </TMS>
 """)
 
-    if qms_conf.is_file() and re.search(r"^mapPath=", qms_conf.read_text(), re.MULTILINE):
+    # No else on the outer guard, deliberately: when the profile was never
+    # staged, that is already reported above, and a second warning about the
+    # contents of a file that does not exist describes a consequence rather
+    # than a fault of its own. Only a staged profile that genuinely lacks the
+    # line has something new to say.
+    if qms_conf.is_file():
         text = qms_conf.read_text()
-        if str(ctx.data_dir / "Offline_Maps") not in text:
-            text = re.sub(r"^(mapPath=.*)$",
-                           lambda m: f"{m.group(1)}, {ctx.data_dir}/Offline_Maps",
-                           text, count=1, flags=re.MULTILINE)
-            qms_conf.write_text(text)
-            ctx.log(f"[+] Registered {ctx.data_dir}/Offline_Maps with QMapShack mapPath.", "ok")
+        if re.search(r"^mapPath=", text, re.MULTILINE):
+            if str(ctx.data_dir / "Offline_Maps") not in text:
+                text = re.sub(r"^(mapPath=.*)$",
+                               lambda m: f"{m.group(1)}, {ctx.data_dir}/Offline_Maps",
+                               text, count=1, flags=re.MULTILINE)
+                qms_conf.write_text(text)
+                ctx.log(f"[+] Registered {ctx.data_dir}/Offline_Maps with QMapShack mapPath.", "ok")
+            else:
+                ctx.log(f"[+] {ctx.data_dir}/Offline_Maps already registered with QMapShack mapPath.", "ok")
         else:
-            ctx.log(f"[+] {ctx.data_dir}/Offline_Maps already registered with QMapShack mapPath.", "ok")
-    else:
-        ctx.log("[!] QMapShack.conf mapPath line not found — .tms files may need manual import.", "warn")
+            ctx.log("[!] QMapShack.conf has no mapPath line — .tms files may need "
+                    "manual import.", "warn")
 
     if staged and not missing:
         ctx.log(f"[+] Config profiles staged: {', '.join(staged)}.", "ok")
@@ -1748,11 +1771,20 @@ def _placeholder_count(path: Path) -> int:
 
 
 def _ini_value(path: Path, key: str) -> Optional[str]:
-    """First `key=value` in a flat INI-style file, or None."""
+    """First `key = value` in a flat INI-style file, or None.
+
+    Spaces around the separator are tolerated. Qt writes `MyCall=W1AW` with
+    none, but an operator who opens the profile in an editor may well leave
+    `MyCall = W1AW` -- and matching on `key + "="` read that as absent, so
+    verification reported a correctly configured node as `MyCall=None`. A
+    commented-out line (`; MyCall=...`) still does not match, because the name
+    is compared whole rather than as a prefix.
+    """
     try:
         for line in path.read_text(errors="replace").splitlines():
-            if line.startswith(key + "="):
-                return line.split("=", 1)[1].strip()
+            name, sep, value = line.partition("=")
+            if sep and name.strip() == key:
+                return value.strip()
     except OSError:
         pass
     return None
