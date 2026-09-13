@@ -191,6 +191,25 @@ correct refusal reads as a failure.
 
 ---
 
+## Releasing: bump `VERSION` before you tag
+
+`VERSION` at the top of `deploy_emcomm_node_gui.py` is the one place the release
+number lives. Nothing derives it — the shipped artifact is a tarball with no
+`.git` beside it, so `git describe` would report "unknown" on exactly the copy an
+operator runs.
+
+It reaches two places an operator can read: the summary screen, and the header of
+every run log. A stale one puts a wrong number on the transcript attached to a
+problem report, which is worse than no number at all.
+
+**Bump it in the commit that gets tagged, not after.** A tag points at a commit;
+if the bump lands later, `v1.2.0` is a tree that calls itself `1.1.0` forever. The
+order is: bump → merge to `main` → tag that commit → build the tarball from it.
+
+Versions are `vMAJOR.MINOR.PATCH`, and the constant carries no leading `v`.
+
+---
+
 ## Relationship to the S.T.N.D. repository
 
 This provisioner began as a public/EM adaptation of a separate private repository

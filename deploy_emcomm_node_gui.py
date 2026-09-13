@@ -146,6 +146,15 @@ except ImportError:
 #                    usual shape for an executable in /usr/local/bin.
 # ===========================================================================
 
+#: Release this file belongs to, without the leading "v".
+#:
+#: Hand-maintained, and deliberately not derived from `git describe`: the
+#: released artifact is a tarball with no .git alongside it, so anything
+#: asking git would report "unknown" on precisely the copy an operator runs.
+#: Bump it in the commit that precedes the tag, so a clone of main never
+#: claims to be a release it is ahead of.
+VERSION = "1.0.0"
+
 PROJECT         = "emcomm"
 OPERATOR_PREFIX = "EMCOMM"
 STATE_DIR_NAME  = "." + PROJECT
@@ -478,9 +487,13 @@ class RunLog:
         uname = os.uname()
         lines = [
             "=" * 72,
-            "%s Field Node provisioner -- run log" % OPERATOR_PREFIX,
+            "%s Field Node provisioner v%s -- run log" % (OPERATOR_PREFIX, VERSION),
             "=" * 72,
             "Started    : %s" % self.started.strftime("%Y-%m-%d %H:%M:%S %Z").strip(),
+            # Which build produced this transcript. The summary screen shows
+            # it too, but the screen closes and this file is what gets
+            # attached to a problem report.
+            "Version    : v%s" % VERSION,
             "Node ID    : %s" % node_id,
             "User       : %s" % user,
             "Host       : %s -- %s" % (uname.nodename, pretty),
@@ -2867,7 +2880,8 @@ class ProvisionerGUI(tk.Tk):
         t = self.summary_body
         t.configure(state="normal")
         t.delete("1.0", "end")
-        t.insert("end", "Node: ", "head"); t.insert("end", node_id + "\n\n")
+        t.insert("end", "Node: ", "head"); t.insert("end", node_id + "\n")
+        t.insert("end", "Provisioner: ", "head"); t.insert("end", "v%s\n\n" % VERSION)
         t.insert("end", "Result\n", "head")
         t.insert("end", "    %s\n" % title, tag)
         t.insert("end", "    %d step(s) run, %d skipped\n" % (len(ran), skipped))
