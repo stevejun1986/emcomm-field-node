@@ -807,7 +807,7 @@ for anything confidential.
 # ===========================================================================
 
 def step_sudoers_and_node_id(ctx: Ctx):
-    ctx.log("[*] Configuring passwordless sudo for core RF daemons...", "warn")
+    ctx.log("[*] Configuring passwordless sudo for core RF daemons...", "info")
     sudoers_content = (
         f"{ctx.user} ALL=(ALL) NOPASSWD: /bin/systemctl restart gpsd.socket\n"
         f"{ctx.user} ALL=(ALL) NOPASSWD: /bin/systemctl restart gpsd\n"
@@ -868,8 +868,12 @@ def step_system_packages(ctx: Ctx):
         updated = ctx.sudo("apt", "update", check=False).returncode == 0
         spin_result.ok = updated
     if updated:
-        with ctx.spin("Upgrading installed packages..."):
-            ctx.sudo("apt", "upgrade", "-y", check=False)
+        with ctx.spin("Upgrading installed packages...") as spin_result:
+            upgraded = ctx.sudo("apt", "upgrade", "-y", check=False).returncode == 0
+            spin_result.ok = upgraded
+        if not upgraded:
+            ctx.log("[!] apt upgrade did not complete — this node is being built on "
+                    "packages that are not fully up to date.", "warn")
 
     packages = [
         "git", "curl", "wget", "build-essential",
@@ -884,8 +888,12 @@ def step_system_packages(ctx: Ctx):
 
     os.environ["WINEPREFIX"] = str(ctx.home / ".wine")
     os.environ["WINEARCH"] = "win64"
-    with ctx.spin("Initializing Wine prefix..."):
-        ctx.run(["wineboot", "--init"], check=False)
+    with ctx.spin("Initializing Wine prefix...") as spin_result:
+        wine_ok = ctx.run(["wineboot", "--init"], check=False).returncode == 0
+        spin_result.ok = wine_ok
+    if not wine_ok:
+        ctx.log("[!] wineboot --init failed — the Wine prefix is not initialised, and "
+                "ion2G will not run until it is.", "warn")
 
 
 def optional_slim_appliance(ctx: Ctx):
@@ -900,20 +908,43 @@ def optional_slim_appliance(ctx: Ctx):
     deployed offline. It is the wrong choice for a volunteer's daily-driver
     laptop, which is exactly why this is a separate, unchecked step.
     """
-    with ctx.spin("Removing preinstalled apps not used on this node..."):
-        ctx.sudo("apt", "purge", "-y",
-                 "hexchat", "transmission-*", "drawing", "simple-scan", check=False)
-        ctx.sudo("apt", "autoremove", "-y", check=False)
+    with ctx.spin("Removing preinstalled apps not used on this node...") as spin_result:
+        # apt exits 0 both for a package that is not installed and for a glob
+        # that matches nothing, so a non-zero code here is a genuine failure
+        # rather than "this machine never had it".
+        purge_rc = ctx.sudo("apt", "purge", "-y",
+                            "hexchat", "transmission-*", "drawing", "simple-scan",
+                            check=False).returncode
+        autoremove_rc = ctx.sudo("apt", "autoremove", "-y", check=False).returncode
+        spin_result.ok = (purge_rc == 0 and autoremove_rc == 0)
+    if purge_rc != 0:
+        ctx.log(f"[!] Package removal exited {purge_rc} — some extras may remain.", "warn")
+    if autoremove_rc != 0:
+        ctx.log(f"[!] apt autoremove exited {autoremove_rc}.", "warn")
 
     with ctx.spin("Disabling unattended update services..."):
         ctx.sudo("systemctl", "stop",
                  "mintupdate-automation-upgrade.timer",
                  "mintupdate-automation-upgrade.service", check=False)
-        ctx.sudo("systemctl", "disable",
-                 "mintupdate-automation-upgrade.timer",
-                 "mintupdate-automation-upgrade.service", check=False)
+        disable_rc = ctx.sudo("systemctl", "disable",
+                              "mintupdate-automation-upgrade.timer",
+                              "mintupdate-automation-upgrade.service",
+                              check=False).returncode
         ctx.sudo("rm", "-f", "/etc/xdg/autostart/mintupdate.desktop", check=False)
-    ctx.log("[!] Unattended updates disabled — patch this node manually before each deployment.", "warn")
+
+    # The claim below used to be made unconditionally. mintupdate is Mint's, so
+    # on anything else these units do not exist, nothing is disabled, and an
+    # operator was still told to patch manually because automatic updates were
+    # off -- a success line outside the branch that earned it, and one that
+    # leaves a node updating itself in the field when it says it will not.
+    # The spinner is deliberately not tied to this: an absent unit is the
+    # expected case off Mint, not a failure.
+    if disable_rc == 0:
+        ctx.log("[!] Unattended updates disabled — patch this node manually before each deployment.", "warn")
+    else:
+        ctx.log("[*] mintupdate automation units not present — nothing to disable. "
+                "Expected on anything but Linux Mint; confirm this system's own "
+                "update service is handled before deployment.", "info")
 
 
 def step_qlog_ion2g(ctx: Ctx):
@@ -1034,23 +1065,39 @@ def step_maps_fetch(ctx: Ctx):
         for layer, _tms, _title in MAP_LAYERS:
             for desc, box, (zmin, zmax) in passes:
                 rc = 1
-                with ctx.spin(f"Fetching {layer} tiles, {desc}, for {area_path.stem}..."):
+                proc = None
+                with ctx.spin(f"Fetching {layer} tiles, {desc}, for {area_path.stem}...") as spin_result:
                     # Explicit bounds rather than re-deriving them in the child,
                     # and --yes because stdin is DEVNULL: the size confirmation
                     # would otherwise raise EOFError.
-                    rc = ctx.run([sys.executable, str(TILE_FETCHER),
-                                  "--north", str(box["north"]), "--south", str(box["south"]),
-                                  "--east", str(box["east"]), "--west", str(box["west"]),
-                                  "--layer", layer,
-                                  "--min-zoom", str(zmin), "--max-zoom", str(zmax),
-                                  "--out", str(tiles_dir), "--yes"],
-                                 check=False).returncode
+                    proc = ctx.run([sys.executable, str(TILE_FETCHER),
+                                    "--north", str(box["north"]), "--south", str(box["south"]),
+                                    "--east", str(box["east"]), "--west", str(box["west"]),
+                                    "--layer", layer,
+                                    "--min-zoom", str(zmin), "--max-zoom", str(zmax),
+                                    "--out", str(tiles_dir), "--yes"],
+                                   check=False)
+                    rc = proc.returncode
+                    spin_result.ok = (rc == 0)
                 if rc == 0:
                     ok_count += 1
                 else:
                     fail_count += 1
                     ctx.log(f"[!] Tile fetch failed: {area_path.stem} / {layer} / "
                             f"{desc} (exit {rc}).", "err")
+                    # The fetcher validates its own input and exits saying exactly
+                    # what is wrong -- "north must be greater than south",
+                    # "latitudes must be between -85 and 85". Keeping only the
+                    # return code threw that away and left the operator an exit
+                    # status against a multi-hour download. A fatal input error is
+                    # one "error:" line; anything else is progress, so show the
+                    # diagnosis when there is one and the tail when there is not.
+                    out = (proc.stdout or "").strip()
+                    if out:
+                        lines = out.splitlines()
+                        diag = [l for l in lines if l.lstrip().lower().startswith("error:")]
+                        for line in (diag or lines[-10:]):
+                            ctx.log(f"    {line}", "err")
 
     if ok_count and not fail_count:
         ctx.log(f"[+] Tiles fetched — {ok_count} pass(es) completed.", "ok")
@@ -1176,7 +1223,7 @@ def step_config_profiles(ctx: Ctx):
         chirp_dir = ctx.home / ".local" / "share" / "CHIRP"
         if not chirp_dir.is_dir():
             chirp_dir.mkdir(parents=True, exist_ok=True)
-            ctx.log("[*] CHIRP directory did not exist — created it.", "warn")
+            ctx.log("[*] CHIRP directory did not exist — created it.", "info")
         shutil.copy(chirp_csv, chirp_dir / chirp_csv.name)
         ctx.log(f"[+] CHIRP channel list staged to {chirp_dir / chirp_csv.name}.", "ok")
         staged.append("CHIRP")
@@ -1211,18 +1258,25 @@ def step_config_profiles(ctx: Ctx):
 </TMS>
 """)
 
-    if qms_conf.is_file() and re.search(r"^mapPath=", qms_conf.read_text(), re.MULTILINE):
+    # No else on the outer guard, deliberately: when the profile was never
+    # staged, that is already reported above, and a second warning about the
+    # contents of a file that does not exist describes a consequence rather
+    # than a fault of its own. Only a staged profile that genuinely lacks the
+    # line has something new to say.
+    if qms_conf.is_file():
         text = qms_conf.read_text()
-        if str(ctx.data_dir / "Offline_Maps") not in text:
-            text = re.sub(r"^(mapPath=.*)$",
-                           lambda m: f"{m.group(1)}, {ctx.data_dir}/Offline_Maps",
-                           text, count=1, flags=re.MULTILINE)
-            qms_conf.write_text(text)
-            ctx.log(f"[+] Registered {ctx.data_dir}/Offline_Maps with QMapShack mapPath.", "ok")
+        if re.search(r"^mapPath=", text, re.MULTILINE):
+            if str(ctx.data_dir / "Offline_Maps") not in text:
+                text = re.sub(r"^(mapPath=.*)$",
+                               lambda m: f"{m.group(1)}, {ctx.data_dir}/Offline_Maps",
+                               text, count=1, flags=re.MULTILINE)
+                qms_conf.write_text(text)
+                ctx.log(f"[+] Registered {ctx.data_dir}/Offline_Maps with QMapShack mapPath.", "ok")
+            else:
+                ctx.log(f"[+] {ctx.data_dir}/Offline_Maps already registered with QMapShack mapPath.", "ok")
         else:
-            ctx.log(f"[+] {ctx.data_dir}/Offline_Maps already registered with QMapShack mapPath.", "ok")
-    else:
-        ctx.log("[!] QMapShack.conf mapPath line not found — .tms files may need manual import.", "warn")
+            ctx.log("[!] QMapShack.conf has no mapPath line — .tms files may need "
+                    "manual import.", "warn")
 
     if staged and not missing:
         ctx.log(f"[+] Config profiles staged: {', '.join(staged)}.", "ok")
@@ -1579,7 +1633,7 @@ def optional_satdump(ctx: Ctx):
     ctx.satdump_installed = True
 
     if ctx.satdump_installed:
-        ctx.log("[*] Deploying SatDump TLE configuration...", "warn")
+        ctx.log("[*] Deploying SatDump TLE configuration...", "info")
         satdump_config_dir = ctx.home / ".config" / "satdump"
         satdump_config_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1767,11 +1821,20 @@ def _placeholder_count(path: Path) -> int:
 
 
 def _ini_value(path: Path, key: str) -> Optional[str]:
-    """First `key=value` in a flat INI-style file, or None."""
+    """First `key = value` in a flat INI-style file, or None.
+
+    Spaces around the separator are tolerated. Qt writes `MyCall=W1AW` with
+    none, but an operator who opens the profile in an editor may well leave
+    `MyCall = W1AW` -- and matching on `key + "="` read that as absent, so
+    verification reported a correctly configured node as `MyCall=None`. A
+    commented-out line (`; MyCall=...`) still does not match, because the name
+    is compared whole rather than as a prefix.
+    """
     try:
         for line in path.read_text(errors="replace").splitlines():
-            if line.startswith(key + "="):
-                return line.split("=", 1)[1].strip()
+            name, sep, value = line.partition("=")
+            if sep and name.strip() == key:
+                return value.strip()
     except OSError:
         pass
     return None
