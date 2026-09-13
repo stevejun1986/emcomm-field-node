@@ -1414,24 +1414,47 @@ def _build_jobs() -> int:
     return max(1, min(cpus, int(free_gb // 2)))
 
 
+# The build shells out to these three. They arrive with build-essential and
+# cmake on the dependency line below, so an absent one means that install did
+# not complete.
+SATDUMP_BUILD_TOOLS = ("cmake", "make", "g++")
+
+
 def optional_satdump(ctx: Ctx):
     # Built from source. Upstream ships .deb packages on GitHub releases but
     # runs no apt repository, so a packaged install meant carrying a .deb and
     # its SHA-256 in this repository and revising both on every release. The
     # source build needs neither.
-    with ctx.spin("Installing SatDump build dependencies..."):
-        ctx.sudo("apt", "install", "-y",
+    with ctx.spin("Installing SatDump build dependencies...") as spin_result:
+        deps_rc = ctx.sudo("apt", "install", "-y",
                  "git", "build-essential", "cmake", "g++", "pkgconf", "libfftw3-dev", "libpng-dev",
                  "libtiff-dev", "libjemalloc-dev", "libcurl4-openssl-dev", "libsqlite3-dev",
                  "librtlsdr-dev", "libhackrf-dev", "libairspy-dev", "libairspyhf-dev",
                  "libdbus-1-dev", "libgl1-mesa-dev", "libpulse-dev", "libusb-1.0-0-dev",
-                 "freeglut3-dev", "libglfw3-dev", "libzen-dev", "libmediainfo-dev", check=False)
+                 "freeglut3-dev", "libglfw3-dev", "libzen-dev", "libmediainfo-dev",
+                 check=False).returncode
 
         # The VOLK package name varies across releases; take whichever exists.
+        volk_pkg = None
         for pkg in ("libvolk-dev", "libvolk2-dev", "libvolk1-dev"):
             if ctx.sudo("apt", "install", "-y", pkg, check=False).returncode == 0:
+                volk_pkg = pkg
                 break
         ctx.sudo("apt", "install", "-y", "libnng-dev", check=False)
+        spin_result.ok = (deps_rc == 0 and volk_pkg is not None)
+
+    # apt installs a package list all-or-nothing: one unavailable name on that
+    # line and none of the rest is installed either, the compiler included.
+    # Every call above is check=False and SpinResult defaults to success, so a
+    # dependency install that installed nothing used to log exactly like one
+    # that worked -- and the first sign of it was a bare FileNotFoundError from
+    # cmake, thirty seconds of cloning later.
+    if deps_rc != 0:
+        ctx.log(f"[!] Build dependency install exited {deps_rc}. apt installs a "
+                f"package list all-or-nothing, so nothing on that line landed.", "err")
+    if volk_pkg is None:
+        ctx.log("[!] No VOLK development package could be installed (tried "
+                "libvolk-dev, libvolk2-dev, libvolk1-dev).", "err")
 
     satdump_dir = ctx.home / APPS_DIR_NAME / "SatDump"
     if not satdump_dir.is_dir():
@@ -1452,6 +1475,19 @@ def optional_satdump(ctx: Ctx):
     head = ctx.run(["git", "-C", str(satdump_dir), "rev-parse", "--short", "HEAD"], check=False)
     built_commit = (head.stdout or "").strip() or "unknown"
 
+    # subprocess raises FileNotFoundError -- not CalledProcessError -- when the
+    # executable itself is absent, so the check=False calls below do not catch
+    # it and build_status never gets a value to report. The operator saw
+    # "FileNotFoundError(2, 'No such file or directory')" with nothing naming
+    # cmake. Say which tool is missing, and why it is missing.
+    absent = [t for t in SATDUMP_BUILD_TOOLS if not shutil.which(t)]
+    if absent:
+        raise RuntimeError(
+            "SatDump build tools not on PATH: %s. The dependency install above "
+            "did not complete -- apt installs its package list all-or-nothing. "
+            "Install them and re-run this step: sudo apt install -y "
+            "build-essential cmake" % ", ".join(absent))
+
     build_dir = satdump_dir / "build"
     build_dir.mkdir(parents=True, exist_ok=True)
     jobs = _build_jobs()
@@ -1471,7 +1507,11 @@ def optional_satdump(ctx: Ctx):
         ctx.log(f"    cd {build_dir} && cmake .. && make -j{jobs}", "err")
         ctx.log("    If the compiler was killed rather than reporting an error, it ran "
                 "out of memory — retry with make -j1.", "err")
-        return
+        # Raise rather than return: a bare return logs at err level but leaves
+        # the step out of the run's failed list, so the summary would close a
+        # failed build with "0 step(s) failed".
+        raise RuntimeError(f"SatDump build failed (exit {build_status}) — "
+                           f"see the retry instructions above.")
 
     ctx.log(f"[+] SatDump {built_commit} built in {build_dir}", "ok")
 

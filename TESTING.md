@@ -37,7 +37,7 @@ before an hour of package installation.
 | 7 | QLog station log + ion2G HF ALE | Checksum must verify; re-run to confirm it is idempotent |
 | 8 | Offline knowledgebase | Large download; the pinned URL will eventually rotate |
 | 9 | Direwolf / Meshtastic | Needs hardware to validate beyond "it installed" |
-| 10 | SatDump | Always a source build; the longest step. Confirm `satdump` reaches `PATH` after `make install`. The TLE row is only checked when a binary exists — TLE staging runs after the build, so with no binary its absence is a consequence, not a second fault |
+| 10 | SatDump | Always a source build; the longest step. Confirm `satdump` reaches `PATH` after `make install`. The dependency install now resolves to a cross and says so when apt fails — apt installs its list all-or-nothing, so one bad name leaves the compiler uninstalled; the build then names the missing tool instead of raising `FileNotFoundError`. The TLE row is only checked when a binary exists — TLE staging runs after the build, so with no binary its absence is a consequence, not a second fault |
 | 11 | Dock-trigger autostart | **Havis DS-PAN-111 + CF-30 only.** The udev rule matches that dock's hub (`05e3:0610`) — it is the real ID, not a placeholder. On other hardware the files install and the rule simply never fires. See **Supported Hardware** in the README |
 | 12 | Slim appliance build | Destructive — `apt purge`s preinstalled apps and disables mintupdate. Test last, on a VM you can roll back |
 
