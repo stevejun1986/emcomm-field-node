@@ -191,7 +191,9 @@ correct refusal reads as a failure.
 
 ---
 
-## Releasing: bump `VERSION` before you tag
+## Releasing
+
+### What a version number is for
 
 `VERSION` at the top of `deploy_emcomm_node_gui.py` is the one place the release
 number lives. Nothing derives it — the shipped artifact is a tarball with no
@@ -202,11 +204,54 @@ It reaches two places an operator can read: the summary screen, and the header o
 every run log. A stale one puts a wrong number on the transcript attached to a
 problem report, which is worse than no number at all.
 
-**Bump it in the commit that gets tagged, not after.** A tag points at a commit;
-if the bump lands later, `v1.2.0` is a tree that calls itself `1.1.0` forever. The
-order is: bump → merge to `main` → tag that commit → build the tarball from it.
+Versions are `vMAJOR.MINOR.PATCH`. The tag carries the `v`; the constant does not.
 
-Versions are `vMAJOR.MINOR.PATCH`, and the constant carries no leading `v`.
+### A tag is a release event, not a commit event
+
+**The scripts are the product. A version moves when a script changes.**
+
+Two scripts ship and both count:
+
+```
+deploy_emcomm_node_gui.py     the provisioner
+scripts/fetch_map_tiles.py    run directly by the operator
+```
+
+A change to either is a change to what someone runs, so either can earn a
+version. Everything else in the archive — `README.md`, `TESTING.md`, the
+checklist, `configs/`, `docs/` — is documentation and scaffolding around them.
+
+Docs-only commits, repo hygiene, and agent guidance do **not** earn a tag.
+Retagging every merge is wasted work: it moves a tag onto a tree that runs
+identically to the one before it, and it invalidates any artifact already built
+against that tag for no gain.
+
+### `v1.0.0` spans the pre-release and the release
+
+The pre-release and the first full release carry the **same** marker: `v1.0.0`.
+Script changes during that window are refinement of a release not yet out, not new
+versions of one already published. The pre-release flag comes off; the number does
+not move.
+
+Integers start increasing **after** the release ships. From then on a script
+change is categorized:
+
+| Change | Bump |
+| --- | --- |
+| Fixes a defect in existing behavior | PATCH — `1.0.1` |
+| Adds a step, a check, or a capability | MINOR — `1.1.0` |
+| Breaks an already-provisioned node or an existing config | MAJOR — `2.0.0` |
+
+### The order, when a version does move
+
+**Bump `VERSION` in the commit that gets tagged, not after.** A tag points at a
+commit; if the bump lands later, `v1.2.0` is a tree that calls itself `1.1.0`
+forever.
+
+    bump → merge to `main` → tag that commit → build the tarball from it
+
+Build the tarball from the tagged commit, not from a working tree. Signing
+attests to bytes; bytes that no tag points at cannot be checked by anyone else.
 
 ---
 
