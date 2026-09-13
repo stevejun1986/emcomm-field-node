@@ -1,0 +1,9 @@
+# Excluded from `git archive` output, which is what GitHub serves as a release
+# tarball or zip. A clone is unaffected: contributors get these, people who
+# download a packaged release do not.
+#
+# TESTING.md is deliberately NOT here. It is operator-facing -- the step table,
+# how to report a failure, the known rough edges -- and belongs in the package.
+tests/          export-ignore
+CLAUDE.md       export-ignore
+.gitattributes  export-ignore
