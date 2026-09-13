@@ -4,6 +4,12 @@
 #
 # TESTING.md is deliberately NOT here. It is operator-facing -- the step table,
 # how to report a failure, the known rough edges -- and belongs in the package.
+#
+# .gitignore is excluded because it is a git artifact and a release archive is
+# not a repository. What it documents for a contributor -- that configs/ and
+# docs/ are operator-supplied -- is already said in configs/README.md and
+# docs/README.md, both of which do ship.
 tests/          export-ignore
 CLAUDE.md       export-ignore
 .gitattributes  export-ignore
+.gitignore      export-ignore
