@@ -1415,9 +1415,28 @@ def _build_jobs() -> int:
 
 
 # The build shells out to these three. They arrive with build-essential and
-# cmake on the dependency line below, so an absent one means that install did
-# not complete.
+# cmake in SATDUMP_TOOLCHAIN, so an absent one means that install did not
+# complete.
 SATDUMP_BUILD_TOOLS = ("cmake", "make", "g++")
+
+# Installed as two apt calls, not one. apt resolves a package list as a single
+# transaction: if any member is unsatisfiable, nothing on the list is installed.
+# That is not hypothetical here -- libmediainfo-dev depends on
+# libcurl4-gnutls-dev, which Conflicts with the libcurl4-openssl-dev also on the
+# list, so the whole set was unsatisfiable and the compiler never landed.
+# Keeping the toolchain in its own transaction means a bad library name costs
+# the library, not the ability to build at all.
+SATDUMP_TOOLCHAIN = ("git", "build-essential", "cmake", "g++", "pkgconf")
+
+# libzen-dev and libmediainfo-dev were on this list and are not SatDump
+# dependencies -- upstream's CMakeLists references neither. They were also the
+# two that made the set unsatisfiable. Removed.
+SATDUMP_LIBS = (
+    "libfftw3-dev", "libpng-dev", "libtiff-dev", "libjemalloc-dev",
+    "libcurl4-openssl-dev", "libsqlite3-dev", "librtlsdr-dev", "libhackrf-dev",
+    "libairspy-dev", "libairspyhf-dev", "libdbus-1-dev", "libgl1-mesa-dev",
+    "libpulse-dev", "libusb-1.0-0-dev", "freeglut3-dev", "libglfw3-dev",
+)
 
 
 def optional_satdump(ctx: Ctx):
@@ -1426,13 +1445,10 @@ def optional_satdump(ctx: Ctx):
     # its SHA-256 in this repository and revising both on every release. The
     # source build needs neither.
     with ctx.spin("Installing SatDump build dependencies...") as spin_result:
-        deps_rc = ctx.sudo("apt", "install", "-y",
-                 "git", "build-essential", "cmake", "g++", "pkgconf", "libfftw3-dev", "libpng-dev",
-                 "libtiff-dev", "libjemalloc-dev", "libcurl4-openssl-dev", "libsqlite3-dev",
-                 "librtlsdr-dev", "libhackrf-dev", "libairspy-dev", "libairspyhf-dev",
-                 "libdbus-1-dev", "libgl1-mesa-dev", "libpulse-dev", "libusb-1.0-0-dev",
-                 "freeglut3-dev", "libglfw3-dev", "libzen-dev", "libmediainfo-dev",
-                 check=False).returncode
+        tools_rc = ctx.sudo("apt", "install", "-y", *SATDUMP_TOOLCHAIN,
+                            check=False).returncode
+        libs_rc = ctx.sudo("apt", "install", "-y", *SATDUMP_LIBS,
+                           check=False).returncode
 
         # The VOLK package name varies across releases; take whichever exists.
         volk_pkg = None
@@ -1441,17 +1457,19 @@ def optional_satdump(ctx: Ctx):
                 volk_pkg = pkg
                 break
         ctx.sudo("apt", "install", "-y", "libnng-dev", check=False)
-        spin_result.ok = (deps_rc == 0 and volk_pkg is not None)
+        spin_result.ok = (tools_rc == 0 and libs_rc == 0 and volk_pkg is not None)
 
-    # apt installs a package list all-or-nothing: one unavailable name on that
-    # line and none of the rest is installed either, the compiler included.
     # Every call above is check=False and SpinResult defaults to success, so a
     # dependency install that installed nothing used to log exactly like one
     # that worked -- and the first sign of it was a bare FileNotFoundError from
-    # cmake, thirty seconds of cloning later.
-    if deps_rc != 0:
-        ctx.log(f"[!] Build dependency install exited {deps_rc}. apt installs a "
-                f"package list all-or-nothing, so nothing on that line landed.", "err")
+    # cmake, thirty seconds of cloning later. Say which part failed instead.
+    if tools_rc != 0:
+        ctx.log(f"[!] Build toolchain install exited {tools_rc} — SatDump cannot "
+                f"be built without it.", "err")
+    if libs_rc != 0:
+        ctx.log(f"[!] Build library install exited {libs_rc}. apt resolves a "
+                f"package list as one transaction, so none of them landed; "
+                f"cmake will report which it cannot find.", "err")
     if volk_pkg is None:
         ctx.log("[!] No VOLK development package could be installed (tried "
                 "libvolk-dev, libvolk2-dev, libvolk1-dev).", "err")
@@ -1495,23 +1513,34 @@ def optional_satdump(ctx: Ctx):
         ctx.log(f"[*] Building with -j{jobs} rather than -j{os.cpu_count()}: memory, "
                 f"not cores, is the limit here. Slower, but it will not be "
                 f"killed part-way.", "info")
-    build_status = 1
+    build_failure = None
     with ctx.spin(f"Building SatDump {built_commit} with -j{jobs} "
                   f"(several minutes; much longer on a slow node)...") as spin_result:
-        if ctx.run(["cmake", ".."], cwd=build_dir, check=False).returncode == 0:
-            build_status = ctx.run(["make", f"-j{jobs}"], cwd=build_dir, check=False).returncode
-        spin_result.ok = (build_status == 0)
+        try:
+            # check=True so a failure arrives as CalledProcessError carrying the
+            # command's captured output. Isolation routes that through
+            # _report_command_failure, which writes every byte to the run log and
+            # a condensed tail to the pane. Under check=False the CompletedProcess
+            # was discarded and cmake's "Could NOT find ..." lines went with it,
+            # so a configure failure reported as three lines of retry advice that
+            # never said what was missing -- the run log promises the complete
+            # output of anything that failed, and this step routed around it.
+            ctx.run(["cmake", ".."], cwd=build_dir)
+            ctx.run(["make", f"-j{jobs}"], cwd=build_dir)
+        except subprocess.CalledProcessError as e:
+            build_failure = e
+            spin_result.ok = False
 
-    if build_status != 0:
+    if build_failure is not None:
         ctx.log("[!] SatDump build failed — SatDump NOT installed. Retry manually:", "err")
         ctx.log(f"    cd {build_dir} && cmake .. && make -j{jobs}", "err")
         ctx.log("    If the compiler was killed rather than reporting an error, it ran "
                 "out of memory — retry with make -j1.", "err")
-        # Raise rather than return: a bare return logs at err level but leaves
-        # the step out of the run's failed list, so the summary would close a
-        # failed build with "0 step(s) failed".
-        raise RuntimeError(f"SatDump build failed (exit {build_status}) — "
-                           f"see the retry instructions above.")
+        # Re-raise the original rather than a fresh error: it carries the output,
+        # and isolation adds a step to the failed list only when it raises. A
+        # bare return logged at err level and still closed the run with
+        # "0 step(s) failed".
+        raise build_failure
 
     ctx.log(f"[+] SatDump {built_commit} built in {build_dir}", "ok")
 
