@@ -169,6 +169,9 @@ Check the steps this node needs, or **Select All** for a full build. Steps are
 independent and not dependency-checked, so any one can be re-run on its own — but
 the ion2G step assumes `wine` and `unzip` are already installed.
 
+`TESTING.md` covers what to watch for per step, the known rough edges, and where
+a run writes its log — read it before provisioning a node you intend to deploy.
+
 ---
 
 ## Fleet Deployment
