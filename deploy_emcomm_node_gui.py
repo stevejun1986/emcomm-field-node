@@ -1414,24 +1414,65 @@ def _build_jobs() -> int:
     return max(1, min(cpus, int(free_gb // 2)))
 
 
+# The build shells out to these three. They arrive with build-essential and
+# cmake in SATDUMP_TOOLCHAIN, so an absent one means that install did not
+# complete.
+SATDUMP_BUILD_TOOLS = ("cmake", "make", "g++")
+
+# Installed as two apt calls, not one. apt resolves a package list as a single
+# transaction: if any member is unsatisfiable, nothing on the list is installed.
+# That is not hypothetical here -- libmediainfo-dev depends on
+# libcurl4-gnutls-dev, which Conflicts with the libcurl4-openssl-dev also on the
+# list, so the whole set was unsatisfiable and the compiler never landed.
+# Keeping the toolchain in its own transaction means a bad library name costs
+# the library, not the ability to build at all.
+SATDUMP_TOOLCHAIN = ("git", "build-essential", "cmake", "g++", "pkgconf")
+
+# libzen-dev and libmediainfo-dev were on this list and are not SatDump
+# dependencies -- upstream's CMakeLists references neither. They were also the
+# two that made the set unsatisfiable. Removed.
+SATDUMP_LIBS = (
+    "libfftw3-dev", "libpng-dev", "libtiff-dev", "libjemalloc-dev",
+    "libcurl4-openssl-dev", "libsqlite3-dev", "librtlsdr-dev", "libhackrf-dev",
+    "libairspy-dev", "libairspyhf-dev", "libdbus-1-dev", "libgl1-mesa-dev",
+    "libpulse-dev", "libusb-1.0-0-dev", "freeglut3-dev", "libglfw3-dev",
+)
+
+
 def optional_satdump(ctx: Ctx):
     # Built from source. Upstream ships .deb packages on GitHub releases but
     # runs no apt repository, so a packaged install meant carrying a .deb and
     # its SHA-256 in this repository and revising both on every release. The
     # source build needs neither.
-    with ctx.spin("Installing SatDump build dependencies..."):
-        ctx.sudo("apt", "install", "-y",
-                 "git", "build-essential", "cmake", "g++", "pkgconf", "libfftw3-dev", "libpng-dev",
-                 "libtiff-dev", "libjemalloc-dev", "libcurl4-openssl-dev", "libsqlite3-dev",
-                 "librtlsdr-dev", "libhackrf-dev", "libairspy-dev", "libairspyhf-dev",
-                 "libdbus-1-dev", "libgl1-mesa-dev", "libpulse-dev", "libusb-1.0-0-dev",
-                 "freeglut3-dev", "libglfw3-dev", "libzen-dev", "libmediainfo-dev", check=False)
+    with ctx.spin("Installing SatDump build dependencies...") as spin_result:
+        tools_rc = ctx.sudo("apt", "install", "-y", *SATDUMP_TOOLCHAIN,
+                            check=False).returncode
+        libs_rc = ctx.sudo("apt", "install", "-y", *SATDUMP_LIBS,
+                           check=False).returncode
 
         # The VOLK package name varies across releases; take whichever exists.
+        volk_pkg = None
         for pkg in ("libvolk-dev", "libvolk2-dev", "libvolk1-dev"):
             if ctx.sudo("apt", "install", "-y", pkg, check=False).returncode == 0:
+                volk_pkg = pkg
                 break
         ctx.sudo("apt", "install", "-y", "libnng-dev", check=False)
+        spin_result.ok = (tools_rc == 0 and libs_rc == 0 and volk_pkg is not None)
+
+    # Every call above is check=False and SpinResult defaults to success, so a
+    # dependency install that installed nothing used to log exactly like one
+    # that worked -- and the first sign of it was a bare FileNotFoundError from
+    # cmake, thirty seconds of cloning later. Say which part failed instead.
+    if tools_rc != 0:
+        ctx.log(f"[!] Build toolchain install exited {tools_rc} — SatDump cannot "
+                f"be built without it.", "err")
+    if libs_rc != 0:
+        ctx.log(f"[!] Build library install exited {libs_rc}. apt resolves a "
+                f"package list as one transaction, so none of them landed; "
+                f"cmake will report which it cannot find.", "err")
+    if volk_pkg is None:
+        ctx.log("[!] No VOLK development package could be installed (tried "
+                "libvolk-dev, libvolk2-dev, libvolk1-dev).", "err")
 
     satdump_dir = ctx.home / APPS_DIR_NAME / "SatDump"
     if not satdump_dir.is_dir():
@@ -1452,6 +1493,19 @@ def optional_satdump(ctx: Ctx):
     head = ctx.run(["git", "-C", str(satdump_dir), "rev-parse", "--short", "HEAD"], check=False)
     built_commit = (head.stdout or "").strip() or "unknown"
 
+    # subprocess raises FileNotFoundError -- not CalledProcessError -- when the
+    # executable itself is absent, so the check=False calls below do not catch
+    # it and build_status never gets a value to report. The operator saw
+    # "FileNotFoundError(2, 'No such file or directory')" with nothing naming
+    # cmake. Say which tool is missing, and why it is missing.
+    absent = [t for t in SATDUMP_BUILD_TOOLS if not shutil.which(t)]
+    if absent:
+        raise RuntimeError(
+            "SatDump build tools not on PATH: %s. The dependency install above "
+            "did not complete -- apt installs its package list all-or-nothing. "
+            "Install them and re-run this step: sudo apt install -y "
+            "build-essential cmake" % ", ".join(absent))
+
     build_dir = satdump_dir / "build"
     build_dir.mkdir(parents=True, exist_ok=True)
     jobs = _build_jobs()
@@ -1459,19 +1513,34 @@ def optional_satdump(ctx: Ctx):
         ctx.log(f"[*] Building with -j{jobs} rather than -j{os.cpu_count()}: memory, "
                 f"not cores, is the limit here. Slower, but it will not be "
                 f"killed part-way.", "info")
-    build_status = 1
+    build_failure = None
     with ctx.spin(f"Building SatDump {built_commit} with -j{jobs} "
                   f"(several minutes; much longer on a slow node)...") as spin_result:
-        if ctx.run(["cmake", ".."], cwd=build_dir, check=False).returncode == 0:
-            build_status = ctx.run(["make", f"-j{jobs}"], cwd=build_dir, check=False).returncode
-        spin_result.ok = (build_status == 0)
+        try:
+            # check=True so a failure arrives as CalledProcessError carrying the
+            # command's captured output. Isolation routes that through
+            # _report_command_failure, which writes every byte to the run log and
+            # a condensed tail to the pane. Under check=False the CompletedProcess
+            # was discarded and cmake's "Could NOT find ..." lines went with it,
+            # so a configure failure reported as three lines of retry advice that
+            # never said what was missing -- the run log promises the complete
+            # output of anything that failed, and this step routed around it.
+            ctx.run(["cmake", ".."], cwd=build_dir)
+            ctx.run(["make", f"-j{jobs}"], cwd=build_dir)
+        except subprocess.CalledProcessError as e:
+            build_failure = e
+            spin_result.ok = False
 
-    if build_status != 0:
+    if build_failure is not None:
         ctx.log("[!] SatDump build failed — SatDump NOT installed. Retry manually:", "err")
         ctx.log(f"    cd {build_dir} && cmake .. && make -j{jobs}", "err")
         ctx.log("    If the compiler was killed rather than reporting an error, it ran "
                 "out of memory — retry with make -j1.", "err")
-        return
+        # Re-raise the original rather than a fresh error: it carries the output,
+        # and isolation adds a step to the failed list only when it raises. A
+        # bare return logged at err level and still closed the run with
+        # "0 step(s) failed".
+        raise build_failure
 
     ctx.log(f"[+] SatDump {built_commit} built in {build_dir}", "ok")
 
@@ -1889,12 +1958,24 @@ def verify_deployment(ctx: Ctx, selected_ids: set) -> list:
 
     if "satdump" in selected_ids:
         built = home / APPS_DIR_NAME / "SatDump" / "build" / "satdump"
-        if shutil.which("satdump") or built.is_file():
-            add("SatDump available", "pass", shutil.which("satdump") or str(built))
+        binary = shutil.which("satdump") or (str(built) if built.is_file() else "")
+        if binary:
+            add("SatDump available", "pass", binary)
+            # The TLE set is staged inside the install step, after the build
+            # succeeds, so a failed build returns before reaching it and no step
+            # ever attempts to write this file. Checked only once a binary
+            # exists: otherwise the row reports a file nothing tried to create,
+            # which is a consequence of the failure above rather than a finding
+            # of its own.
+            #
+            # Both remaining cases still report. A failed `make install` leaves
+            # the build-tree binary, and a successful build with no TLE source
+            # under configs/ warns -- which on a node imaged from a populated
+            # configs/ is a real staging fault, not an absent optional.
+            want(home / ".config" / "satdump" / "satdump_tles.txt",
+                 "SatDump TLE set staged", hard=False)
         else:
             add("SatDump available", "fail", "no satdump binary found (package or build)")
-        want(home / ".config" / "satdump" / "satdump_tles.txt",
-             "SatDump TLE set staged", hard=False)
 
     # --- desktop -------------------------------------------------------
     if "desktop_shortcuts" in selected_ids:
