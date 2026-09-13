@@ -1508,6 +1508,25 @@ def optional_satdump(ctx: Ctx):
 
     build_dir = satdump_dir / "build"
     build_dir.mkdir(parents=True, exist_ok=True)
+
+    # A configure that failed leaves CMakeCache.txt behind holding the results it
+    # got, including every find_package that came back NOTFOUND. cmake reuses a
+    # cached NOTFOUND rather than looking again, so a retry after the missing
+    # dependencies are installed fails exactly as the first attempt did, for a
+    # reason that is no longer true. The cache also pins the absolute source path
+    # it was configured from, so a moved or re-cloned tree errors out.
+    #
+    # A build tree with a binary in it is a good one -- leave it so a re-run is an
+    # incremental rebuild. A cache with no binary beside it is the wreckage of an
+    # attempt that did not finish: discard it and configure clean.
+    built_binary = build_dir / "satdump"
+    cmake_cache = build_dir / "CMakeCache.txt"
+    if cmake_cache.is_file() and not built_binary.is_file():
+        cmake_cache.unlink()
+        shutil.rmtree(build_dir / "CMakeFiles", ignore_errors=True)
+        ctx.log("[*] Discarded the CMake cache left by an earlier failed configure "
+                "— it would have reused that run's NOTFOUND results.", "warn")
+
     jobs = _build_jobs()
     if jobs < (os.cpu_count() or 1):
         ctx.log(f"[*] Building with -j{jobs} rather than -j{os.cpu_count()}: memory, "
