@@ -37,9 +37,10 @@ before an hour of package installation.
 | 7 | QLog station log + ion2G HF ALE | Checksum must verify; re-run to confirm it is idempotent |
 | 8 | Offline knowledgebase | Large download; the pinned URL will eventually rotate |
 | 9 | Direwolf / Meshtastic | Needs hardware to validate beyond "it installed" |
-| 10 | SatDump | Always a source build; the longest step. Confirm `satdump` reaches `PATH` after `make install`. Toolchain and libraries install as two apt transactions, so a bad library name cannot cost the compiler; each resolves to its own cross and cmake's output reaches the run log. Retrying after a failed configure is safe — the stale `CMakeCache.txt` is discarded, since cmake would otherwise reuse its NOTFOUND results. The TLE row is only checked when a binary exists — TLE staging runs after the build, so with no binary its absence is a consequence, not a second fault |
-| 11 | Dock-trigger autostart | **Havis DS-PAN-111 + CF-30 only.** The udev rule matches that dock's hub (`05e3:0610`) — it is the real ID, not a placeholder. On other hardware the files install and the rule simply never fires. See **Supported Hardware** in the README |
-| 12 | Slim appliance build | Destructive — `apt purge`s preinstalled apps and disables mintupdate. Test last, on a VM you can roll back |
+| 10 | dump1090 (ADS-B) | Preseeded install, so no debconf prompt should stall it. Confirm it is **not** enabled at boot (`systemctl is-enabled dump1090-mutability`) and not in the autostart sequence — it and SatDump cannot share the RTL-SDR dongle. The lighttpd map arrives on the distribution default, not loopback: `ss -ltnp | grep lighttpd` |
+| 11 | SatDump | Always a source build; the longest step. Confirm `satdump` reaches `PATH` after `make install`. Toolchain and libraries install as two apt transactions, so a bad library name cannot cost the compiler; each resolves to its own cross and cmake's output reaches the run log. Retrying after a failed configure is safe — the stale `CMakeCache.txt` is discarded, since cmake would otherwise reuse its NOTFOUND results. The TLE row is only checked when a binary exists — TLE staging runs after the build, so with no binary its absence is a consequence, not a second fault |
+| 12 | Dock-trigger autostart | **Havis DS-PAN-111 + CF-30 only.** The udev rule matches that dock's hub (`05e3:0610`) — it is the real ID, not a placeholder. On other hardware the files install and the rule simply never fires. See **Supported Hardware** in the README |
+| 13 | Slim appliance build | Destructive — `apt purge`s preinstalled apps and disables mintupdate. Test last, on a VM you can roll back |
 
 ## The check that matters most
 
