@@ -73,8 +73,34 @@ Installed and configured by the provisioner:
 * **Offline knowledgebase:** Kiwix ZIM engine, plus a loopback document server on
   `127.0.0.1:8085` for the PDF reference library
 * **Weather satellite imagery:** SatDump (via RTL-SDR)
+* **ADS-B aircraft tracking:** dump1090 (via RTL-SDR) — installed but **not**
+  started automatically; see the note below
 * **Automation:** optional dock-triggered autostart (udev + systemd), desktop
   shortcuts
+
+### ADS-B and SatDump share one dongle
+
+Both drive the RTL-SDR, and only one process can hold it at a time. dump1090 is
+therefore installed with auto-start disabled and is **not** launched by the dock
+autostart sequence — a service that took the dongle at boot would silently cost
+you satellite imagery, and the failure would surface later as SatDump being
+unable to open the device.
+
+Start ADS-B when you want it, and stop it before a satellite pass:
+
+```bash
+sudo service dump1090-mutability start
+sudo service dump1090-mutability stop
+```
+
+Receiver latitude and longitude are deliberately left unset — that is operator
+position data, in the same class as a grid square. `EMCOMM_Data/ADSB/dump1090_setup.md`
+is staged on the node and covers setting them, viewing the aircraft map, and
+antenna expectations at 1090 MHz.
+
+Note that the map arrives on the distribution's lighttpd default rather than on
+loopback, unlike the document server. Check what it is listening on before
+deploying a node: `sudo ss -ltnp | grep lighttpd`.
 
 Every one of these is an independently checkable step. Nothing is mandatory.
 

@@ -655,7 +655,7 @@ trap 'rm -f "$LOCKFILE"' EXIT
 
 echo "=== [$(date)] Dock Event Triggered - Starting Sequenced Launch ==="
 
-echo "[1/6] Restacking Time & Positioning Services..."
+echo "[1/5] Restacking Time & Positioning Services..."
 sudo systemctl restart gpsd.socket
 sudo systemctl restart chrony
 
@@ -675,17 +675,20 @@ else
     echo "[!] Time engine did NOT sync after ${COUNTER}s — continuing anyway."
 fi
 
-echo "[2/6] Spawning Station Log Window..."
+echo "[2/5] Spawning Station Log Window..."
 if [ -f "$HOME/scripts/blotter.sh" ]; then
     x-terminal-emulator -e "$HOME/scripts/blotter.sh" &
 fi
 sleep 1
 
-echo "[3/6] Starting ADS-B Radar Engine..."
-if [ -d "$HOME/dump1090" ]; then
-    tmux new-session -d -s @UNIT_PREFIX@-adsb "cd $HOME/dump1090 && ./dump1090 --interactive"
-fi
-sleep 1
+# ADS-B is deliberately NOT launched here. dump1090 and SatDump both drive the
+# RTL-SDR dongle and only one process can hold it, so starting ADS-B at dock
+# would silently cost the operator satellite imagery. It is a "here if you want
+# it" install, started by hand -- see EMCOMM_Data/ADSB/dump1090_setup.md.
+#
+# This slot previously announced "Starting ADS-B Radar Engine..." and then
+# launched only if ~/dump1090 existed, which nothing ever created: the line
+# claimed a thing it had not done, on every dock event.
 
 echo "[*] Waiting for radio interface (ttyUSB/ttyACM)..."
 RADIO_COUNTER=0
@@ -704,20 +707,20 @@ else
     echo "[!] No radio interface detected after ${RADIO_COUNTER}s — apps may launch without hardware."
 fi
 
-echo "[4/6] Launching JS8Call..."
+echo "[3/5] Launching JS8Call..."
 if command -v js8call &> /dev/null; then
     js8call &
 fi
 sleep 2
 
-echo "[5/6] Initializing ion2G HF ALE ..."
+echo "[4/5] Initializing ion2G HF ALE ..."
 ION2G_EXE_PATH="$(cat "$HOME/@STATE_DIR@/ion2g_exe_path" 2>/dev/null)"
 if [ -n "$ION2G_EXE_PATH" ] && [ -f "$ION2G_EXE_PATH" ]; then
     (cd "$(dirname "$ION2G_EXE_PATH")" && wine "$ION2G_EXE_PATH" &)
 fi
 sleep 2
 
-echo "[6/6] Deploying QLog & QMapShack..."
+echo "[5/5] Deploying QLog & QMapShack..."
 if command -v qlog &> /dev/null; then
     qlog &
 fi
@@ -727,6 +730,69 @@ fi
 
 echo "=== [$(date)] @OPERATOR_PREFIX@ Operational Stack Deployed ==="
 """
+
+DUMP1090_SETUP_MD = """# ADS-B Reception (dump1090) — Setup Reference
+
+Staged by the provisioner. Nothing here is applied automatically: the receiver
+position is operator data, and the dongle is shared hardware.
+
+## The dongle is single-user
+
+SatDump and dump1090 both drive the RTL-SDR dongle, and only one process can
+hold it at a time. Whichever starts first wins; the other fails to open the
+device. This is why dump1090 is installed with `auto-start` set to **false**,
+and why the dock autostart sequence does not launch it -- a service that took
+the dongle at boot would silently cost you satellite imagery.
+
+Start it when you want ADS-B, and stop it before a satellite pass:
+
+```bash
+sudo service dump1090-mutability start
+sudo service dump1090-mutability stop
+```
+
+Confirm which process holds the dongle:
+
+```bash
+rtl_test -t                      # fails if something else has it
+```
+
+## Receiver position is not set
+
+`decode-lat` and `decode-lon` are deliberately left empty. They are your
+station's position -- the same class of data as a grid square -- and setting
+them is your call, not the provisioner's.
+
+Without them dump1090 still decodes aircraft and shows them on the map. What
+you lose is range rings, distance-from-station, and correct handling of
+surface-position messages.
+
+To set them:
+
+```bash
+sudo dpkg-reconfigure dump1090-mutability
+```
+
+## Viewing
+
+The package installs a lighttpd site serving the aircraft map at
+`http://<this-node>/dump1090/`. Unlike the document server, which is bound to
+loopback, this arrives on the distribution default. Check it before deploying:
+
+```bash
+sudo ss -ltnp | grep lighttpd
+```
+
+Raw output for other tools is on TCP 30003 (Basestation format) and 30005
+(Beast binary).
+
+## Antenna
+
+1090 MHz wants its own antenna. The stock dongle whip will show aircraft
+overhead and little else; a proper 1090 MHz collinear or a filtered ADS-B
+antenna is the difference between 20 nm and 200 nm.
+"""
+
 
 MESHTASTIC_SETUP_MD = """# Meshtastic Node Setup Reference
 
@@ -1493,6 +1559,67 @@ SATDUMP_LIBS = (
 )
 
 
+def optional_dump1090(ctx: Ctx):
+    """ADS-B aircraft reception from the RTL-SDR dongle.
+
+    Two properties of the Debian package shape this step. It carries 41 debconf
+    templates, so a bare install can stop and wait for an answer behind a pane
+    showing only a spinner. And `auto-start` defaults to true, which would take
+    the RTL-SDR dongle at boot; SatDump could then never open it on a node
+    provisioned for both, with nothing saying why.
+
+    Both are settled by preseeding debconf before apt runs. The dock autostart
+    sequence does not launch it either -- see AUTOSTART_SEQUENCE_SH.
+    """
+    # decode-lat / decode-lon are the station's own position, the same class of
+    # data as a grid square, and are left empty on purpose. The staged
+    # reference tells the operator how to set them.
+    seed_path = "/tmp/%s-dump1090.seed" % PROJECT
+    seed = ("dump1090-mutability dump1090-mutability/auto-start boolean false\n"
+            "dump1090-mutability dump1090-mutability/decode-lat string \n"
+            "dump1090-mutability dump1090-mutability/decode-lon string \n")
+
+    with ctx.spin("Installing dump1090 (ADS-B)...") as spin_result:
+        ctx.sudo_write(seed_path, seed)
+        seeded = ctx.sudo("debconf-set-selections", seed_path, check=False).returncode == 0
+        # noninteractive as well as the preseed: the seed answers the three
+        # questions that matter, the frontend covers the other thirty-eight.
+        install_rc = ctx.sudo("env", "DEBIAN_FRONTEND=noninteractive",
+                              "apt", "install", "-y", "dump1090-mutability",
+                              check=False).returncode
+        ctx.sudo("rm", "-f", seed_path, check=False)
+        spin_result.ok = (install_rc == 0)
+
+    if not seeded:
+        ctx.log("[!] debconf preseed failed — if the install stalled, it is waiting "
+                "for an answer on a terminal you cannot see.", "err")
+    if install_rc != 0:
+        ctx.log(f"[!] dump1090-mutability install exited {install_rc} — ADS-B NOT "
+                f"available.", "err")
+        return
+
+    binary = shutil.which("dump1090-mutability")
+    if not binary:
+        ctx.log("[!] dump1090-mutability installed but no binary on PATH — ADS-B NOT "
+                "usable.", "err")
+        return
+    ctx.log(f"[+] dump1090 installed at {binary}.", "ok")
+
+    # Belt and braces: the preseed should have left it stopped, but a package
+    # that starts itself here costs SatDump the dongle silently.
+    ctx.sudo("service", "dump1090-mutability", "stop", check=False)
+    ctx.log("[!] dump1090 does NOT start at boot and is not in the dock autostart "
+            "sequence, deliberately — it and SatDump cannot both hold the RTL-SDR "
+            "dongle. Start it when you want ADS-B.", "warn")
+
+    adsb_dir = ctx.data_dir / "ADSB"
+    adsb_dir.mkdir(parents=True, exist_ok=True)
+    (adsb_dir / "dump1090_setup.md").write_text(DUMP1090_SETUP_MD)
+    ctx.log(f"[+] ADS-B setup reference staged to {adsb_dir}/", "ok")
+    ctx.log("[!] Receiver latitude/longitude are NOT set — that is operator position "
+            "data. See the staged reference.", "warn")
+
+
 def optional_satdump(ctx: Ctx):
     # Built from source. Upstream ships .deb packages on GitHub releases but
     # runs no apt repository, so a packaged install meant carrying a .deb and
@@ -1751,6 +1878,7 @@ COMPONENTS: list[Component] = [
     Component("dock_trigger", "Dock-trigger autostart (Havis dock only)", step_dock_trigger),
     Component("direwolf", "Direwolf (AX.25 / APRS software TNC)", optional_direwolf),
     Component("meshtastic", "Meshtastic CLI (LoRa mesh node tooling)", optional_meshtastic),
+    Component("dump1090", "dump1090 (ADS-B aircraft tracking, RTL-SDR)", optional_dump1090),
     Component("satdump", "SatDump (weather imagery, RTL-SDR) — SLOW", optional_satdump),
     Component("desktop_shortcuts", "Desktop shortcuts", finalize),
 ]
@@ -2037,6 +2165,22 @@ def verify_deployment(ctx: Ctx, selected_ids: set) -> list:
             else "added, but requires log out / log in to take effect")
         want(ctx.data_dir / "Meshtastic" / "meshtastic_setup.md",
              "Mesh setup reference staged", hard=False)
+
+    if "dump1090" in selected_ids:
+        d1090 = shutil.which("dump1090-mutability")
+        add("dump1090 installed", "pass" if d1090 else "fail",
+            d1090 or "no dump1090-mutability on PATH")
+        # Not starting at boot is the intended state here, not a defect: the
+        # dongle is single-user and SatDump shares it.
+        enabled = subprocess.run(["systemctl", "is-enabled", "dump1090-mutability"],
+                                 stdin=subprocess.DEVNULL, capture_output=True,
+                                 text=True).stdout.strip()
+        add("dump1090 not claiming the dongle at boot",
+            "pass" if enabled != "enabled" else "warn",
+            ("is-enabled -> " + (enabled or "not registered")) if enabled != "enabled"
+            else "enabled — it will hold the RTL-SDR dongle and SatDump cannot open it")
+        want(ctx.data_dir / "ADSB" / "dump1090_setup.md",
+             "ADS-B setup reference staged", hard=False)
 
     if "satdump" in selected_ids:
         built = home / APPS_DIR_NAME / "SatDump" / "build" / "satdump"
