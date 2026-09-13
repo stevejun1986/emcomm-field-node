@@ -807,7 +807,7 @@ for anything confidential.
 # ===========================================================================
 
 def step_sudoers_and_node_id(ctx: Ctx):
-    ctx.log("[*] Configuring passwordless sudo for core RF daemons...", "warn")
+    ctx.log("[*] Configuring passwordless sudo for core RF daemons...", "info")
     sudoers_content = (
         f"{ctx.user} ALL=(ALL) NOPASSWD: /bin/systemctl restart gpsd.socket\n"
         f"{ctx.user} ALL=(ALL) NOPASSWD: /bin/systemctl restart gpsd\n"
@@ -868,8 +868,12 @@ def step_system_packages(ctx: Ctx):
         updated = ctx.sudo("apt", "update", check=False).returncode == 0
         spin_result.ok = updated
     if updated:
-        with ctx.spin("Upgrading installed packages..."):
-            ctx.sudo("apt", "upgrade", "-y", check=False)
+        with ctx.spin("Upgrading installed packages...") as spin_result:
+            upgraded = ctx.sudo("apt", "upgrade", "-y", check=False).returncode == 0
+            spin_result.ok = upgraded
+        if not upgraded:
+            ctx.log("[!] apt upgrade did not complete — this node is being built on "
+                    "packages that are not fully up to date.", "warn")
 
     packages = [
         "git", "curl", "wget", "build-essential",
@@ -884,8 +888,12 @@ def step_system_packages(ctx: Ctx):
 
     os.environ["WINEPREFIX"] = str(ctx.home / ".wine")
     os.environ["WINEARCH"] = "win64"
-    with ctx.spin("Initializing Wine prefix..."):
-        ctx.run(["wineboot", "--init"], check=False)
+    with ctx.spin("Initializing Wine prefix...") as spin_result:
+        wine_ok = ctx.run(["wineboot", "--init"], check=False).returncode == 0
+        spin_result.ok = wine_ok
+    if not wine_ok:
+        ctx.log("[!] wineboot --init failed — the Wine prefix is not initialised, and "
+                "ion2G will not run until it is.", "warn")
 
 
 def optional_slim_appliance(ctx: Ctx):
@@ -900,20 +908,43 @@ def optional_slim_appliance(ctx: Ctx):
     deployed offline. It is the wrong choice for a volunteer's daily-driver
     laptop, which is exactly why this is a separate, unchecked step.
     """
-    with ctx.spin("Removing preinstalled apps not used on this node..."):
-        ctx.sudo("apt", "purge", "-y",
-                 "hexchat", "transmission-*", "drawing", "simple-scan", check=False)
-        ctx.sudo("apt", "autoremove", "-y", check=False)
+    with ctx.spin("Removing preinstalled apps not used on this node...") as spin_result:
+        # apt exits 0 both for a package that is not installed and for a glob
+        # that matches nothing, so a non-zero code here is a genuine failure
+        # rather than "this machine never had it".
+        purge_rc = ctx.sudo("apt", "purge", "-y",
+                            "hexchat", "transmission-*", "drawing", "simple-scan",
+                            check=False).returncode
+        autoremove_rc = ctx.sudo("apt", "autoremove", "-y", check=False).returncode
+        spin_result.ok = (purge_rc == 0 and autoremove_rc == 0)
+    if purge_rc != 0:
+        ctx.log(f"[!] Package removal exited {purge_rc} — some extras may remain.", "warn")
+    if autoremove_rc != 0:
+        ctx.log(f"[!] apt autoremove exited {autoremove_rc}.", "warn")
 
     with ctx.spin("Disabling unattended update services..."):
         ctx.sudo("systemctl", "stop",
                  "mintupdate-automation-upgrade.timer",
                  "mintupdate-automation-upgrade.service", check=False)
-        ctx.sudo("systemctl", "disable",
-                 "mintupdate-automation-upgrade.timer",
-                 "mintupdate-automation-upgrade.service", check=False)
+        disable_rc = ctx.sudo("systemctl", "disable",
+                              "mintupdate-automation-upgrade.timer",
+                              "mintupdate-automation-upgrade.service",
+                              check=False).returncode
         ctx.sudo("rm", "-f", "/etc/xdg/autostart/mintupdate.desktop", check=False)
-    ctx.log("[!] Unattended updates disabled — patch this node manually before each deployment.", "warn")
+
+    # The claim below used to be made unconditionally. mintupdate is Mint's, so
+    # on anything else these units do not exist, nothing is disabled, and an
+    # operator was still told to patch manually because automatic updates were
+    # off -- a success line outside the branch that earned it, and one that
+    # leaves a node updating itself in the field when it says it will not.
+    # The spinner is deliberately not tied to this: an absent unit is the
+    # expected case off Mint, not a failure.
+    if disable_rc == 0:
+        ctx.log("[!] Unattended updates disabled — patch this node manually before each deployment.", "warn")
+    else:
+        ctx.log("[*] mintupdate automation units not present — nothing to disable. "
+                "Expected on anything but Linux Mint; confirm this system's own "
+                "update service is handled before deployment.", "info")
 
 
 def step_qlog_ion2g(ctx: Ctx):
@@ -1192,7 +1223,7 @@ def step_config_profiles(ctx: Ctx):
         chirp_dir = ctx.home / ".local" / "share" / "CHIRP"
         if not chirp_dir.is_dir():
             chirp_dir.mkdir(parents=True, exist_ok=True)
-            ctx.log("[*] CHIRP directory did not exist — created it.", "warn")
+            ctx.log("[*] CHIRP directory did not exist — created it.", "info")
         shutil.copy(chirp_csv, chirp_dir / chirp_csv.name)
         ctx.log(f"[+] CHIRP channel list staged to {chirp_dir / chirp_csv.name}.", "ok")
         staged.append("CHIRP")
@@ -1583,7 +1614,7 @@ def optional_satdump(ctx: Ctx):
     ctx.satdump_installed = True
 
     if ctx.satdump_installed:
-        ctx.log("[*] Deploying SatDump TLE configuration...", "warn")
+        ctx.log("[*] Deploying SatDump TLE configuration...", "info")
         satdump_config_dir = ctx.home / ".config" / "satdump"
         satdump_config_dir.mkdir(parents=True, exist_ok=True)
 
