@@ -73,6 +73,8 @@ Installed and configured by the provisioner:
 * **Offline knowledgebase:** Kiwix ZIM engine, plus a loopback document server on
   `127.0.0.1:8085` for the PDF reference library
 * **Weather satellite imagery:** SatDump (via RTL-SDR)
+* **SDR command-line tools:** `rtl-sdr` — `rtl_test`, `rtl_fm`, `rtl_power`;
+  `rtl_test -t` is what the dongle-contention check calls for
 * **ADS-B aircraft tracking:** dump1090 (via RTL-SDR) — installed but **not**
   started automatically; see the note below
 * **Automation:** optional dock-triggered autostart (udev + systemd), desktop
