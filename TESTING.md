@@ -94,7 +94,18 @@ checksum. If a step is not safely re-runnable, that is a bug worth reporting.
   dongle, and confirm `rtl_test -t` opens it cleanly. Testing "does it start at
   boot" and "can it open the device" separately avoids the fault and isolates a
   failure better than the combined test would.
-* **SatDump is built from source on every node**, and it is the longest step by
+* **SatDump is built from source on every node, pinned to an upstream tag.**
+  It is not built from `master`: on 2026-09-13 upstream had moved the CLI entry
+  point into `src-cli/legacy/main.cpp` and renamed it `main_old`, so the
+  `satdump` target failed to link with ``undefined reference to `main` `` and
+  the step failed on a node that had built fine days earlier. A provisioner
+  cannot absorb an upstream mid-refactor. The tag lives in `SATDUMP_VERSION`;
+  bumping it means building the new tag on a node first.
+
+  A clone left by an earlier run is moved onto the tag rather than reused as-is,
+  and warns if it cannot be — otherwise the pin is silently untrue on every
+  re-run.
+* The SatDump build is the longest step by
   far. Parallelism is capped by available memory rather than core count: on a
   4 GB node with a desktop running it builds with `-j1` — slow, but it will not
   be killed part-way. A compiler *killed* rather than erroring ran out of
