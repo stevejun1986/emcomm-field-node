@@ -75,6 +75,25 @@ checksum. If a step is not safely re-runnable, that is a bug worth reporting.
   Mint. Without it the GUI does not start at all.
 * **The Kiwix URL is pinned** to a dated snapshot and will 404 once upstream
   rotates it. Pick a current file and update the URL and hash.
+* **A VirtualBox VM cannot be rebooted while a USB device is forwarded to it.**
+  Rebooting with the RTL-SDR passed through faults the guest — it behaves like
+  pulling the power cord rather than a clean shutdown. The VM itself is fine.
+  Detach the dongle in VirtualBox first, then reboot. This matters because the
+  one thing needing a reboot is whether dump1090 claims the dongle at boot, and
+  that question splits cleanly in two:
+
+  ```bash
+  ls -l /etc/rc*.d/ | grep dump1090   # no S* links => it will not start at boot
+  ```
+
+  `update-rc.d ... disable` renames the start links to kill links, so `K01…` in
+  `rc0.d`/`rc1.d`/`rc6.d` is expected and `S01…` in `rc2.d`–`rc5.d` is not. That
+  is the same fact `systemctl is-enabled` reports, read off the filesystem. Then
+  reboot with the dongle **detached**, confirm nothing is running
+  (`ps aux | grep [d]ump1090`, `/run/dump1090-mutability/` absent), attach the
+  dongle, and confirm `rtl_test -t` opens it cleanly. Testing "does it start at
+  boot" and "can it open the device" separately avoids the fault and isolates a
+  failure better than the combined test would.
 * **SatDump is built from source on every node**, and it is the longest step by
   far. Parallelism is capped by available memory rather than core count: on a
   4 GB node with a desktop running it builds with `-j1` — slow, but it will not
