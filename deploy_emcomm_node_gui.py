@@ -1030,11 +1030,17 @@ def step_system_packages(ctx: Ctx):
             ctx.log("[!] apt upgrade did not complete — this node is being built on "
                     "packages that are not fully up to date.", "warn")
 
+    # rtl-sdr for the command-line tools, not the library: librtlsdr2 arrives as
+    # a dependency of dump1090 and SatDump and brings the udev rules, but
+    # rtl_test and friends live in this separate package. The staged ADS-B
+    # reference tells the operator to run `rtl_test -t` to prove the dongle
+    # contention, which was "command not found" on every node built here.
     packages = [
         "git", "curl", "wget", "build-essential",
         "gpsd", "gpsd-clients", "chrony", "tmux",
         "python3-pip", "python3-venv",
         "qmapshack", "kiwix", "kiwix-tools", "chirp", "js8call", "dirmngr",
+        "rtl-sdr",
         "wine", "wine32", "wine64", "winetricks", "subversion",
         "gnupg", "libdbus-1-dev", "python3-requests",
     ]
