@@ -794,10 +794,10 @@ lsmod | grep -i rtl28xxu          # any output means the kernel has it
 sudo rmmod dvb_usb_rtl28xxu       # release it for this session
 ```
 
-Nothing on this node blacklists that module: `librtlsdr2` creates
-`/etc/modprobe.d/` but ships no file in it, and neither does `rtl-sdr` or
-`dump1090-mutability`. If a node keeps losing the dongle to the kernel across
-reboots, a blacklist is the durable fix -- see **Making it permanent** below.
+**The provisioner blacklists it** -- see **The blacklist** below. No package
+does: `librtlsdr2` creates `/etc/modprobe.d/` but ships no file in it, and
+neither does `rtl-sdr` or `dump1090-mutability`, so without this step the
+kernel wins the race on a freshly imaged node.
 
 ### 1. Permissions decide who *may* open it
 
@@ -872,18 +872,32 @@ rtl_test -t
 with a busy or permission error means something above still has it, or you are
 fighting layer 0 or 1.
 
-## Making it permanent
+## The blacklist
 
-To stop the kernel claiming the dongle on every boot:
+The provisioner writes:
 
-```bash
-echo 'blacklist dvb_usb_rtl28xxu' | sudo tee /etc/modprobe.d/blacklist-rtl.conf
-sudo update-initramfs -u
+```
+/etc/modprobe.d/emcomm-rtlsdr.conf
+    blacklist dvb_usb_rtl28xxu
 ```
 
-The provisioner does **not** do this. It is a system-wide change affecting any
-DVB-T use of the device, and on a node that will only ever run SDR software it
-is usually right -- but it is a deployment decision, not a default.
+Only that one module is named. It is the driver that binds the USB device; the
+demodulator and tuner modules load as its dependencies rather than on their own,
+so blacklisting the binder is enough.
+
+No `update-initramfs` is needed. The blacklist is read by modprobe, and a USB
+dongle is bound by udev calling modprobe long after the initramfs is out of the
+picture -- `dvb_usb_rtl28xxu` is never in an initramfs, because no root
+filesystem needs it.
+
+If the module was already loaded when the provisioner ran, it is also unloaded
+there and then, so the dongle is free on that run rather than after the next
+reboot.
+
+**To use the dongle as a DVB-T receiver instead**, delete that file and reboot.
+That is the trade: this node treats the RTL-SDR as an SDR, and television
+reception is the thing given up. Any other SDR hardware needs its own driver
+work regardless, which none of this touches.
 
 ## Before a satellite pass
 
@@ -1809,6 +1823,68 @@ SATDUMP_LIBS = (
 )
 
 
+DVB_BLACKLIST_FILE = "/etc/modprobe.d/%s-rtlsdr.conf" % PROJECT
+
+
+def _blacklist_dvb_driver(ctx: Ctx):
+    """Stop the kernel claiming the RTL-SDR as a TV tuner.
+
+    Plugging in an RTL-SDR matches dvb_usb_rtl28xxu, the DVB-T driver, which
+    binds the device before any userspace program sees it. dump1090, SatDump
+    and rtl_test then all fail to open it, and nothing says why.
+
+    Only dvb_usb_rtl28xxu is named: it is the driver that binds the USB device,
+    and the demodulator and tuner modules load as its dependencies rather than
+    on their own. Blacklisting the one that binds is enough.
+
+    This node's SDR hardware is an RTL-SDR used for ADS-B and weather imagery.
+    DVB-T reception is not a thing it is for, so the driver has no use here and
+    exactly one effect. Any other dongle needs its own driver work regardless,
+    which this does not touch.
+
+    No update-initramfs. The blacklist is read by modprobe, and a USB dongle is
+    bound by udev calling modprobe well after the initramfs is out of the
+    picture -- dvb_usb_rtl28xxu is never in an initramfs, because no root
+    filesystem needs it.
+    """
+    content = (
+        "# Written by the %s provisioner.\n"
+        "#\n"
+        "# An RTL-SDR dongle matches dvb_usb_rtl28xxu, the DVB-T television\n"
+        "# driver, which binds the device before userspace can open it. This\n"
+        "# node uses that dongle for ADS-B and weather satellite imagery, so\n"
+        "# the TV driver has no purpose here and only takes the hardware away.\n"
+        "#\n"
+        "# Remove this file and reboot to use the dongle as a DVB-T receiver.\n"
+        "blacklist dvb_usb_rtl28xxu\n" % OPERATOR_PREFIX
+    )
+    try:
+        ctx.sudo_write(DVB_BLACKLIST_FILE, content, mode="0644")
+    except subprocess.CalledProcessError as e:
+        ctx.log(f"[!] Could not write {DVB_BLACKLIST_FILE} — the kernel may claim "
+                f"the RTL-SDR dongle as a TV tuner, and no SDR program will be "
+                f"able to open it. Write it by hand: "
+                f"echo 'blacklist dvb_usb_rtl28xxu' | sudo tee {DVB_BLACKLIST_FILE}",
+                "err")
+        return
+    ctx.log(f"[+] Kernel DVB-T driver blacklisted ({DVB_BLACKLIST_FILE}) — the "
+            f"RTL-SDR stays available to SDR software.", "ok")
+
+    # Blacklisting governs future loads, not the running kernel. If it is
+    # already bound it still holds the dongle, and the operator would hit
+    # exactly the failure this prevents -- on this run, not the next boot.
+    loaded = subprocess.run(["lsmod"], stdin=subprocess.DEVNULL,
+                            capture_output=True, text=True).stdout
+    if any(line.split()[:1] == ["dvb_usb_rtl28xxu"] for line in loaded.splitlines()):
+        if ctx.sudo("modprobe", "-r", "dvb_usb_rtl28xxu", check=False).returncode == 0:
+            ctx.log("[+] Unloaded the running dvb_usb_rtl28xxu — the dongle is free now, "
+                    "not just after the next reboot.", "ok")
+        else:
+            ctx.log("[!] dvb_usb_rtl28xxu is loaded and could not be unloaded — it is "
+                    "holding the RTL-SDR until you reboot. The blacklist stops it "
+                    "coming back.", "warn")
+
+
 def _stage_dongle_reference(ctx: Ctx):
     """Stage the shared-dongle reference, and warn when both claimants exist.
 
@@ -1949,6 +2025,7 @@ def optional_dump1090(ctx: Ctx):
     adsb_dir.mkdir(parents=True, exist_ok=True)
     (adsb_dir / "dump1090_setup.md").write_text(DUMP1090_SETUP_MD)
     ctx.log(f"[+] ADS-B setup reference staged to {adsb_dir}/", "ok")
+    _blacklist_dvb_driver(ctx)
     _stage_dongle_reference(ctx)
     ctx.log("[!] Receiver latitude/longitude are NOT set — that is operator position "
             "data. See the staged reference.", "warn")
@@ -2118,6 +2195,7 @@ def optional_satdump(ctx: Ctx):
     # Usable either way: the build succeeded, so the user-level TLE config
     # below is worth writing and a build-tree binary will read it.
     ctx.satdump_installed = True
+    _blacklist_dvb_driver(ctx)
     _stage_dongle_reference(ctx)
     # But only a successful install put anything under /usr, and the desktop
     # shortcut in finalize() needs /usr/share/applications/satdump.desktop.
@@ -2659,6 +2737,9 @@ def verify_deployment(ctx: Ctx, selected_ids: set) -> list:
     if {"dump1090", "satdump"} & selected_ids:
         want(ctx.data_dir / "SDR" / "dongle_arbitration.md",
              "RTL-SDR dongle reference staged", hard=False)
+        # Hard: without it the kernel can take the dongle at plug-in and every
+        # SDR program on the node fails to open a device that is plainly there.
+        want(Path(DVB_BLACKLIST_FILE), "Kernel DVB-T driver blacklisted")
 
     # --- desktop -------------------------------------------------------
     if "desktop_shortcuts" in selected_ids:

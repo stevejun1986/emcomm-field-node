@@ -101,6 +101,13 @@ sudo service dump1090-mutability start
 sudo service dump1090-mutability stop
 ```
 
+Either SDR step also blacklists the kernel DVB-T driver
+(`/etc/modprobe.d/emcomm-rtlsdr.conf`). An RTL-SDR matches `dvb_usb_rtl28xxu`,
+which binds it as a television tuner before any SDR program can open it — no
+package blacklists that, so without this step the kernel wins the race on a
+freshly imaged node. Delete the file and reboot to use the dongle for DVB-T
+instead.
+
 If **both** are installed, the run says so explicitly and points at
 `EMCOMM_Data/SDR/dongle_arbitration.md`, staged by either SDR step. It covers the
 four layers that decide who holds the dongle — the kernel DVB-T driver, the
