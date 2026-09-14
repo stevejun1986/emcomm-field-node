@@ -80,11 +80,17 @@ Installed and configured by the provisioner:
 
 ### ADS-B and SatDump share one dongle
 
-Both drive the RTL-SDR, and only one process can hold it at a time. dump1090 is
-therefore installed with auto-start disabled and is **not** launched by the dock
-autostart sequence — a service that took the dongle at boot would silently cost
-you satellite imagery, and the failure would surface later as SatDump being
-unable to open the device.
+Both drive the RTL-SDR, and only one process can hold it at a time. dump1090's
+boot entry is therefore removed, and it is **not** launched by the dock autostart
+sequence — a service that took the dongle at boot would silently cost you
+satellite imagery, and the failure would surface later as SatDump being unable to
+open the device.
+
+It stays fully startable on demand, which is a separate switch from the boot one:
+`START_DUMP1090` in `/etc/default/dump1090-mutability` is checked by the init
+script on *every* start, and the provisioner leaves it `"yes"`. The service user
+is also added to `plugdev`, without which the daemon starts, cannot open the
+dongle, and exits — leaving an aircraft map that never populates.
 
 Start ADS-B when you want it, and stop it before a satellite pass:
 

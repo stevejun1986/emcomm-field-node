@@ -767,15 +767,77 @@ position is operator data, and the dongle is shared hardware.
 
 SatDump and dump1090 both drive the RTL-SDR dongle, and only one process can
 hold it at a time. Whichever starts first wins; the other fails to open the
-device. This is why dump1090 is installed with `auto-start` set to **false**,
-and why the dock autostart sequence does not launch it -- a service that took
-the dongle at boot would silently cost you satellite imagery.
+device. This is why the provisioner removes dump1090's boot entry, and why the
+dock autostart sequence does not launch it -- a service that took the dongle at
+boot would silently cost you satellite imagery.
 
 Start it when you want ADS-B, and stop it before a satellite pass:
 
 ```bash
 sudo service dump1090-mutability start
 sudo service dump1090-mutability stop
+```
+
+## Two switches, not one
+
+Worth knowing, because they fail in different ways and only one is obvious.
+
+`START_DUMP1090` in `/etc/default/dump1090-mutability` is checked by the init
+script on **every** start, not just at boot. Set to `"no"`, the start command
+above prints nothing and does nothing, `/run/dump1090-mutability/` is never
+created, and the bundled map loads but its data fetch answers 404 --
+"Problem fetching data from dump1090". The provisioner leaves it `"yes"`.
+
+The runlevel links are what control boot, and the package installs them
+regardless of that setting. The provisioner removes them. To check both:
+
+```bash
+grep START_DUMP1090 /etc/default/dump1090-mutability   # expect "yes"
+systemctl is-enabled dump1090-mutability               # expect disabled
+```
+
+Running the binary straight from a terminal is a third thing again: it decodes
+to your screen and holds the dongle, but writes no JSON, so the map stays empty
+however long you leave it. Use the service.
+
+## The service user needs the dongle
+
+The daemon does not run as you. The init script starts it with
+`--chuid "$DUMP1090_USER"`, and the package creates that user with
+`adduser --system`, which puts it in `nogroup` and nothing else.
+
+The dongle is not readable by `nogroup`. `librtlsdr2` ships
+`/usr/lib/udev/rules.d/60-librtlsdr2.rules` with `GROUP="plugdev"` and
+`MODE="0660"`, so the device node is `root:plugdev 0660`. Without membership
+the daemon starts, fails to open the device, and exits:
+
+```
+usb_open error -3
+Error opening the RTLSDR device: Permission denied
+```
+
+`service ... start` still returns 0, and the map stays empty. Your own account
+is in `plugdev`, so running the binary by hand works perfectly -- which makes
+this look like anything except a permissions problem.
+
+The provisioner adds the service user to `plugdev`. To check, or to repair by
+hand:
+
+```bash
+id "$(awk -F= '$1=="DUMP1090_USER"{gsub(/"/,"",$2); print $2}' \
+      /etc/default/dump1090-mutability)"      # expect plugdev in the list
+sudo adduser dump1090 plugdev
+sudo service dump1090-mutability restart
+```
+
+Group membership applies to new processes, so restarting the service is enough
+-- no logout needed.
+
+Confirm which process holds the dongle:
+
+```bash
+sudo fuser -v /dev/bus/usb/*/* 2>/dev/null
+rtl_test -t                      # fails if something else has it
 ```
 
 Confirm which process holds the dongle:
@@ -1589,20 +1651,43 @@ SATDUMP_LIBS = (
 def optional_dump1090(ctx: Ctx):
     """ADS-B aircraft reception from the RTL-SDR dongle.
 
-    Two properties of the Debian package shape this step. It carries 41 debconf
-    templates, so a bare install can stop and wait for an answer behind a pane
-    showing only a spinner. And `auto-start` defaults to true, which would take
-    the RTL-SDR dongle at boot; SatDump could then never open it on a node
-    provisioned for both, with nothing saying why.
+    Three properties of the Debian package shape this step, and none of them is
+    the one the package's own naming suggests.
 
-    Both are settled by preseeding debconf before apt runs. The dock autostart
-    sequence does not launch it either -- see AUTOSTART_SEQUENCE_SH.
+    It carries 41 debconf templates, so a bare install can stop and wait for an
+    answer behind a pane showing only a spinner. That one is settled by
+    preseeding before apt runs.
+
+    debconf's `auto-start` does NOT mean "start at boot". postinst maps it to
+    START_DUMP1090 in /etc/default/dump1090-mutability, and the init script
+    tests that on EVERY start:
+
+        if [ "x$START_DUMP1090" != "xyes" ]; then
+            log_warning_msg "Not starting $NAME daemon, disabled via ..."
+            return 2
+
+    So seeding it false does not install "a service that does not start at
+    boot" -- it installs a service that cannot be started at all. Boot
+    behaviour is a separate switch: dh_installinit runs `update-rc.d
+    dump1090-mutability defaults` regardless of debconf, so the runlevel links
+    are what have to be removed.
+
+    And the daemon does not run as the operator. The init script starts it with
+    --chuid "$DUMP1090_USER", a user postinst creates with `adduser --system`
+    into nogroup -- while the RTL-SDR device node is root:plugdev 0660 from
+    librtlsdr2's udev rules. Without the group it starts, fails to open the
+    dongle, and exits, leaving a map that never populates.
+
+    The dock autostart sequence does not launch it either -- see
+    AUTOSTART_SEQUENCE_SH.
     """
     # decode-lat / decode-lon are the station's own position, the same class of
     # data as a grid square, and are left empty on purpose. The staged
     # reference tells the operator how to set them.
     seed_path = "/tmp/%s-dump1090.seed" % PROJECT
-    seed = ("dump1090-mutability dump1090-mutability/auto-start boolean false\n"
+    # auto-start true, then the boot links removed below: see the docstring.
+    # Seeding it false is what makes the service unstartable.
+    seed = ("dump1090-mutability dump1090-mutability/auto-start boolean true\n"
             "dump1090-mutability dump1090-mutability/decode-lat string \n"
             "dump1090-mutability dump1090-mutability/decode-lon string \n")
 
@@ -1632,12 +1717,42 @@ def optional_dump1090(ctx: Ctx):
         return
     ctx.log(f"[+] dump1090 installed at {binary}.", "ok")
 
-    # Belt and braces: the preseed should have left it stopped, but a package
-    # that starts itself here costs SatDump the dongle silently.
+    # Without this the daemon starts, fails to open the dongle, and exits --
+    # quietly, because the start command still returns 0. The operator's own
+    # account IS in plugdev, so running the binary by hand works perfectly,
+    # which makes it look like anything except a permissions problem.
+    #
+    # Read rather than hardcoded: DUMP1090_USER is debconf-configurable
+    # (postinst: `subvar run-as-user DUMP1090_USER`), and granting dongle
+    # access to the wrong account would be worse than not granting it.
+    run_as = _dump1090_default("DUMP1090_USER")
+    if not run_as:
+        ctx.log(f"[!] No DUMP1090_USER in {DUMP1090_DEFAULTS} — cannot grant the "
+                f"service user access to the RTL-SDR dongle. dump1090 will install "
+                f"and start, but receive nothing.", "err")
+    elif ctx.sudo("adduser", run_as, "plugdev", check=False).returncode == 0:
+        ctx.log(f"[+] Service user '{run_as}' added to 'plugdev' — it can open the "
+                f"RTL-SDR dongle.", "ok")
+    else:
+        ctx.log(f"[!] Could not add '{run_as}' to 'plugdev'. dump1090 will start and "
+                f"then fail to open the dongle with 'usb_open error -3', leaving the "
+                f"aircraft map empty. Fix with: sudo adduser {run_as} plugdev", "err")
+
+    # This, not the preseed, is what keeps the dongle free at boot. The package
+    # registers runlevel links unconditionally; removing them leaves the daemon
+    # fully startable by hand.
+    boot_off = ctx.sudo("systemctl", "disable", "dump1090-mutability",
+                        check=False).returncode == 0
     ctx.sudo("service", "dump1090-mutability", "stop", check=False)
-    ctx.log("[!] dump1090 does NOT start at boot and is not in the dock autostart "
-            "sequence, deliberately — it and SatDump cannot both hold the RTL-SDR "
-            "dongle. Start it when you want ADS-B.", "warn")
+    if boot_off:
+        ctx.log("[!] dump1090 does NOT start at boot and is not in the dock autostart "
+                "sequence, deliberately — it and SatDump cannot both hold the RTL-SDR "
+                "dongle. Start it when you want ADS-B with: "
+                "sudo service dump1090-mutability start", "warn")
+    else:
+        ctx.log("[!] Could not disable dump1090 at boot — it may claim the RTL-SDR "
+                "dongle on the next reboot and SatDump will not be able to open it. "
+                "Disable it by hand: sudo systemctl disable dump1090-mutability", "err")
 
     adsb_dir = ctx.data_dir / "ADSB"
     adsb_dir.mkdir(parents=True, exist_ok=True)
@@ -1995,6 +2110,32 @@ def _ini_value(path: Path, key: str) -> Optional[str]:
     return None
 
 
+DUMP1090_DEFAULTS = Path("/etc/default/dump1090-mutability")
+
+
+def _dump1090_default(key: str) -> Optional[str]:
+    """One value out of /etc/default/dump1090-mutability.
+
+    The init script sources this file, so what is in it is what actually
+    decides behaviour -- and two of its values decide whether ADS-B works at
+    all. START_DUMP1090 gates every start; DUMP1090_USER is who the daemon
+    runs as, and therefore who needs access to the dongle. Both the install
+    step and the verification pass need to read them, so the parsing lives in
+    one place rather than being written twice and drifting.
+
+    Built on _ini_value rather than repeating its parsing: `KEY=value` one per
+    line, whole-name match, tolerant of spaces, and a commented line does not
+    match. The one difference is that this file is shell, so values are quoted
+    (DUMP1090_USER="dump1090") and the quotes come off here.
+
+    Returns None when the file or the key is absent, which callers report
+    rather than guessing a default: guessing the service user wrong would grant
+    dongle access to an account that is not running it.
+    """
+    raw = _ini_value(DUMP1090_DEFAULTS, key)
+    return None if raw is None else raw.strip('"').strip("'")
+
+
 def verify_deployment(ctx: Ctx, selected_ids: set) -> list:
     out: list = []
 
@@ -2197,15 +2338,51 @@ def verify_deployment(ctx: Ctx, selected_ids: set) -> list:
         d1090 = shutil.which("dump1090-mutability")
         add("dump1090 installed", "pass" if d1090 else "fail",
             d1090 or "no dump1090-mutability on PATH")
-        # Not starting at boot is the intended state here, not a defect: the
-        # dongle is single-user and SatDump shares it.
+        # Three independent things have to be true, and checking only the first
+        # reported "enabled — it will hold the dongle" on a node where the
+        # daemon could not start at all: a false alarm about the dongle, and
+        # silence about two real defects.
         enabled = subprocess.run(["systemctl", "is-enabled", "dump1090-mutability"],
                                  stdin=subprocess.DEVNULL, capture_output=True,
                                  text=True).stdout.strip()
         add("dump1090 not claiming the dongle at boot",
             "pass" if enabled != "enabled" else "warn",
             ("is-enabled -> " + (enabled or "not registered")) if enabled != "enabled"
-            else "enabled — it will hold the RTL-SDR dongle and SatDump cannot open it")
+            else "enabled — it will hold the RTL-SDR dongle at boot and SatDump "
+                 "cannot open it")
+
+        # START_DUMP1090 is what the init script tests on every start, so "no"
+        # means the documented start command does nothing, the JSON directory is
+        # never created, and the bundled map answers 404.
+        startable = _dump1090_default("START_DUMP1090")
+        if startable == "yes":
+            add("dump1090 startable on demand", "pass", "START_DUMP1090=yes")
+        elif startable is None:
+            add("dump1090 startable on demand", "fail",
+                "no START_DUMP1090 in " + str(DUMP1090_DEFAULTS))
+        else:
+            add("dump1090 startable on demand", "fail",
+                "START_DUMP1090=%s — 'service dump1090-mutability start' will "
+                "refuse, and the aircraft map will stay empty" % (startable or "(empty)"))
+
+        # Installed, startable, not at boot -- and still unable to receive, if
+        # the service user cannot open the dongle. The daemon exits seconds
+        # after a successful start, so nothing upstream of this notices.
+        run_as = _dump1090_default("DUMP1090_USER")
+        if not run_as:
+            add("dump1090 can open the dongle", "fail",
+                "no DUMP1090_USER in " + str(DUMP1090_DEFAULTS))
+        else:
+            groups = subprocess.run(["id", "-nG", run_as], stdin=subprocess.DEVNULL,
+                                    capture_output=True, text=True).stdout.split()
+            if "plugdev" in groups:
+                add("dump1090 can open the dongle", "pass",
+                    "%s is in 'plugdev'" % run_as)
+            else:
+                add("dump1090 can open the dongle", "fail",
+                    "%s is not in 'plugdev' — the RTL-SDR node is root:plugdev 0660, "
+                    "so the daemon starts and then dies with 'usb_open error -3'"
+                    % run_as)
         want(ctx.data_dir / "ADSB" / "dump1090_setup.md",
              "ADS-B setup reference staged", hard=False)
 
