@@ -116,7 +116,27 @@ correct for an imaged node kept offline, and wrong for a laptop in daily use.
 
 Either way: patch the node manually before each deployment cycle.
 
-## 12. Full Dry Run
+## 12. SatDump First Launch (TLEs)
+**Only if the SatDump step was run. Do this while the node still has network.**
+
+SatDump writes its runtime configuration and fetches TLEs on **first launch of the
+GUI**, not at install time — its own setting is described as "auto update happens at
+launch only". A node that has never had SatDump opened arrives in the field with no
+element sets and cannot predict a pass.
+
+Open SatDump once, confirm the Tracking tab lists satellites, and close it.
+
+**Repeat this shortly before the node deploys.** Element sets decay within days and
+degrade badly past two weeks — a stale TLE does not fail loudly, it points the dish
+at empty sky. A node imaged months before deployment needs a fresh fetch regardless
+of what was captured at provisioning time.
+
+Nothing shipped in this repository substitutes for it: no TLE set is bundled, because
+a file committed to git is stale the day it is committed. A curated set for the
+handful of birds a node actually works can be staged as `configs/satdump_tles.txt`,
+supplied by the group like every other profile — but it still needs refreshing.
+
+## 13. Full Dry Run
 Before the node counts as ready, exercise it end to end:
     - transmit and receive on each enabled mode, into a dummy load or on a net
     - confirm maps render offline with the network cable pulled
