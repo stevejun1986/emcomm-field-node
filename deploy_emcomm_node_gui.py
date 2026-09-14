@@ -1948,6 +1948,25 @@ def optional_satdump(ctx: Ctx):
         else:
             ctx.log("[+] settings.json already exists — leaving as-is.", "ok")
 
+        # SatDump does its first-run setup and its TLE fetch when the GUI is
+        # launched, not when it is installed -- its own config calls this "auto
+        # update happens at launch only". A node that goes to the field having
+        # never had SatDump opened therefore arrives with no element sets, and
+        # discovers it during a pass rather than on the bench.
+        #
+        # Nothing automated can substitute for this: the fetch needs network,
+        # and provisioning is the last point at which the node reliably has it.
+        # Element sets also decay in days, so this is a pre-deployment action
+        # and not a one-time install step -- a node imaged in March and
+        # deployed in June needs it again. Said here because the operator is
+        # looking at the screen now, and again in the checklist because that is
+        # what gets worked before a node ships.
+        ctx.log("[!] LAUNCH SATDUMP ONCE WHILE STILL ONLINE, before this node goes "
+                "to the field. First launch is when it writes its runtime config and "
+                "fetches TLEs; a node that has never had it opened has no element "
+                "sets and cannot predict a pass. TLEs decay within days, so repeat "
+                "this shortly before deployment.", "warn")
+
 
 def finalize(ctx: Ctx):
     desktop_dir = ctx.home / "Desktop"
