@@ -770,12 +770,140 @@ fi
 echo "=== [$(date)] @OPERATOR_PREFIX@ Operational Stack Deployed ==="
 """
 
+DONGLE_ARBITRATION_MD = """# The RTL-SDR Dongle: Who Has It
+
+Staged by the provisioner. Nothing here is applied automatically.
+
+One dongle, several programs that want it, and **only one can hold it at a
+time**. This is the reference for handing it back and forth deliberately
+rather than discovering the contention during a pass.
+
+## Four layers, only one of which you control
+
+Most of what decides "who has the dongle" is not configurable. Knowing which
+layer you are fighting saves a lot of time.
+
+### 0. The kernel may take it first
+
+Plugging in an RTL-SDR can auto-load `dvb_usb_rtl28xxu`, the driver that treats
+it as a DVB-T television tuner. If that happens, no userspace SDR program can
+open the device at all -- not dump1090, not SatDump, not `rtl_test`.
+
+```bash
+lsmod | grep -i rtl28xxu          # any output means the kernel has it
+sudo rmmod dvb_usb_rtl28xxu       # release it for this session
+```
+
+Nothing on this node blacklists that module: `librtlsdr2` creates
+`/etc/modprobe.d/` but ships no file in it, and neither does `rtl-sdr` or
+`dump1090-mutability`. If a node keeps losing the dongle to the kernel across
+reboots, a blacklist is the durable fix -- see **Making it permanent** below.
+
+### 1. Permissions decide who *may* open it
+
+The device node is `root:plugdev 0660`, from
+`/usr/lib/udev/rules.d/60-librtlsdr2.rules`. Anything opening the dongle must be
+in the `plugdev` group.
+
+Your own account is. So is the `dump1090` service user -- the provisioner adds
+it, because the daemon runs as its own user (`--chuid` in the init script) and
+`adduser --system` would otherwise leave it in `nogroup` only. Without that it
+starts, fails to open the device, and exits, leaving an empty aircraft map and
+no obvious error.
+
+```bash
+id                                            # you: expect plugdev
+id "$(awk -F= '$1=="DUMP1090_USER"{gsub(/"/,"",$2); print $2}' \
+      /etc/default/dump1090-mutability)"      # the service user: expect plugdev
+```
+
+### 2. Exclusivity is absolute
+
+libusb claims the USB interface. First process to open it wins; everyone else
+fails. There is no sharing, no priority, and no setting that changes this. This
+is the layer people expect to configure, and it is the one that cannot be.
+
+### 3. Who starts, and when -- the only layer you control
+
+| | dump1090 | SatDump |
+| --- | --- | --- |
+| at boot | runlevel links, **removed by the provisioner** | never starts itself |
+| on demand | `START_DUMP1090="yes"` in `/etc/default/dump1090-mutability`, then `service ... start` | you launch it |
+
+dump1090 has **two** switches and both must be right: `START_DUMP1090` decides
+whether it can start *at all* (the init script tests it on every start, not just
+at boot), and the runlevel links decide whether it starts *at boot*. The
+provisioner sets the first to `yes` and removes the second, which is what makes
+it startable on demand while leaving the dongle free at boot.
+
+## Handing it over
+
+Work out who has it first:
+
+```bash
+sudo fuser -v /dev/bus/usb/*/*
+ps aux | grep -E '[d]ump1090|[s]atdump'
+```
+
+**To ADS-B:**
+
+```bash
+sudo service dump1090-mutability start
+```
+
+**To SatDump:**
+
+```bash
+sudo service dump1090-mutability stop && sudo pkill -x dump1090-mutability
+satdump-ui
+```
+
+Both halves matter. `service ... stop` only reaches the daemon the init script
+started -- `start-stop-daemon` matches on the service user -- so a copy you
+launched by hand from a terminal survives it untouched.
+
+**To confirm nothing holds it:**
+
+```bash
+rtl_test -t
+```
+
+`rtl_test` succeeding means the dongle is free and openable by you. It failing
+with a busy or permission error means something above still has it, or you are
+fighting layer 0 or 1.
+
+## Making it permanent
+
+To stop the kernel claiming the dongle on every boot:
+
+```bash
+echo 'blacklist dvb_usb_rtl28xxu' | sudo tee /etc/modprobe.d/blacklist-rtl.conf
+sudo update-initramfs -u
+```
+
+The provisioner does **not** do this. It is a system-wide change affecting any
+DVB-T use of the device, and on a node that will only ever run SDR software it
+is usually right -- but it is a deployment decision, not a default.
+
+## Before a satellite pass
+
+The cost of getting this wrong is asymmetric. A dump1090 left running does not
+announce itself; SatDump simply fails to open the device, and a pass that
+happens once is missed. Stopping ADS-B before a pass is cheap and reversible;
+the pass is not.
+"""
+
+
 DUMP1090_SETUP_MD = """# ADS-B Reception (dump1090) — Setup Reference
 
 Staged by the provisioner. Nothing here is applied automatically: the receiver
 position is operator data, and the dongle is shared hardware.
 
 ## The dongle is single-user
+
+**See `EMCOMM_Data/SDR/dongle_arbitration.md` for the full picture** — the
+kernel driver, the permission layer, and handing the dongle between programs.
+This section covers only the dump1090 side of it.
 
 SatDump and dump1090 both drive the RTL-SDR dongle, and only one process can
 hold it at a time. Whichever starts first wins; the other fails to open the
@@ -1681,6 +1809,36 @@ SATDUMP_LIBS = (
 )
 
 
+def _stage_dongle_reference(ctx: Ctx):
+    """Stage the shared-dongle reference, and warn when both claimants exist.
+
+    dump1090 and SatDump are independent options, so a node can carry either,
+    neither, or both. Only the last case has a problem, and it is a quiet one:
+    whichever opens the RTL-SDR first wins, and the loser reports a device it
+    cannot open rather than a conflict. Nothing on the node connects the two.
+
+    Called from both steps, checking for the OTHER. In a run installing both
+    that means the first step sees nothing and the second warns, so the notice
+    appears once rather than twice -- and a run installing only one still warns
+    correctly when the other was already there from an earlier run.
+    """
+    sdr_dir = ctx.data_dir / "SDR"
+    sdr_dir.mkdir(parents=True, exist_ok=True)
+    (sdr_dir / "dongle_arbitration.md").write_text(DONGLE_ARBITRATION_MD)
+    ctx.log(f"[+] RTL-SDR dongle reference staged to {sdr_dir}/", "ok")
+
+    has_dump1090 = shutil.which("dump1090-mutability") is not None
+    # A build-tree SatDump takes the dongle exactly as a system-installed one
+    # does, so presence here is not the same question as satdump_system_installed.
+    has_satdump = (shutil.which("satdump") is not None
+                   or (ctx.home / APPS_DIR_NAME / "SatDump" / "build" / "satdump").is_file())
+    if has_dump1090 and has_satdump:
+        ctx.log("[!] BOTH dump1090 and SatDump are installed on this node. They "
+                "cannot both hold the RTL-SDR dongle — whichever opens it first "
+                "wins and the other simply fails to see the device. Read "
+                f"{sdr_dir}/dongle_arbitration.md before operating either.", "warn")
+
+
 def optional_dump1090(ctx: Ctx):
     """ADS-B aircraft reception from the RTL-SDR dongle.
 
@@ -1791,6 +1949,7 @@ def optional_dump1090(ctx: Ctx):
     adsb_dir.mkdir(parents=True, exist_ok=True)
     (adsb_dir / "dump1090_setup.md").write_text(DUMP1090_SETUP_MD)
     ctx.log(f"[+] ADS-B setup reference staged to {adsb_dir}/", "ok")
+    _stage_dongle_reference(ctx)
     ctx.log("[!] Receiver latitude/longitude are NOT set — that is operator position "
             "data. See the staged reference.", "warn")
 
@@ -1959,6 +2118,7 @@ def optional_satdump(ctx: Ctx):
     # Usable either way: the build succeeded, so the user-level TLE config
     # below is worth writing and a build-tree binary will read it.
     ctx.satdump_installed = True
+    _stage_dongle_reference(ctx)
     # But only a successful install put anything under /usr, and the desktop
     # shortcut in finalize() needs /usr/share/applications/satdump.desktop.
     # Claiming it exists produced a "shortcut skipped" warning that read as a
@@ -2491,6 +2651,14 @@ def verify_deployment(ctx: Ctx, selected_ids: set) -> list:
                  "SatDump TLE set staged", hard=False)
         else:
             add("SatDump available", "fail", "no satdump binary found (package or build)")
+
+    # Staged by whichever SDR step ran, so it is checked once for either rather
+    # than inside both blocks: add() appends unconditionally and does not key on
+    # the label, so checking it in each would render the row twice on a node
+    # carrying both.
+    if {"dump1090", "satdump"} & selected_ids:
+        want(ctx.data_dir / "SDR" / "dongle_arbitration.md",
+             "RTL-SDR dongle reference staged", hard=False)
 
     # --- desktop -------------------------------------------------------
     if "desktop_shortcuts" in selected_ids:

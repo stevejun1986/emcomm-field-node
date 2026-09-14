@@ -101,6 +101,13 @@ sudo service dump1090-mutability start
 sudo service dump1090-mutability stop
 ```
 
+If **both** are installed, the run says so explicitly and points at
+`EMCOMM_Data/SDR/dongle_arbitration.md`, staged by either SDR step. It covers the
+four layers that decide who holds the dongle — the kernel DVB-T driver, the
+`plugdev` permission on the device node, libusb's exclusivity, and the start
+switches that are the only part you control — and how to hand it between
+programs.
+
 Receiver latitude and longitude are deliberately left unset — that is operator
 position data, in the same class as a grid square. `EMCOMM_Data/ADSB/dump1090_setup.md`
 is staged on the node and covers setting them, viewing the aircraft map, and
