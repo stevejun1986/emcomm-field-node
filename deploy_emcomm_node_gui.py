@@ -1644,6 +1644,21 @@ def _build_jobs() -> int:
 # The build shells out to these three. They arrive with build-essential and
 # cmake in SATDUMP_TOOLCHAIN, so an absent one means that install did not
 # complete.
+#: Upstream tag the source build is pinned to.
+#:
+#: This was deliberately unpinned, on the reasoning that recording the built
+#: commit was enough. It is not. Every provisioning run then clones whatever
+#: master happens to be that day, so the same repository and the same steps
+#: produce a node that builds or does not, depending on the date -- and on
+#: 2026-09-13 it did not: upstream had moved the CLI entry point into
+#: src-cli/legacy/main.cpp and renamed it main_old, leaving the satdump target
+#: with "undefined reference to `main`" at link time. A provisioner cannot
+#: absorb an upstream mid-refactor; pinning is what makes a run repeatable.
+#:
+#: Bumping this is a deliberate act: build the new tag on a node before
+#: changing it here.
+SATDUMP_VERSION = "1.2.2"
+
 SATDUMP_BUILD_TOOLS = ("cmake", "make", "g++")
 
 # Installed as two apt calls, not one. apt resolves a package list as a single
@@ -1817,20 +1832,35 @@ def optional_satdump(ctx: Ctx):
 
     satdump_dir = ctx.home / APPS_DIR_NAME / "SatDump"
     if not satdump_dir.is_dir():
-        with ctx.spin("Cloning SatDump source...") as spin_result:
-            # Shallow: the full history is a large download for a node being
-            # provisioned over whatever connection is to hand.
+        with ctx.spin(f"Cloning SatDump source at {SATDUMP_VERSION}...") as spin_result:
+            # Shallow AND pinned: the full history is a large download for a
+            # node provisioned over whatever connection is to hand, and master
+            # is not a thing a provisioner can depend on -- see SATDUMP_VERSION.
             spin_result.ok = ctx.run(
-                ["git", "clone", "--depth", "1",
+                ["git", "clone", "--depth", "1", "--branch", SATDUMP_VERSION,
                  "https://github.com/SatDump/SatDump.git", str(satdump_dir)],
                 check=False).returncode == 0
+    else:
+        # A clone left by an earlier run holds whatever that run checked out --
+        # for any run before this change, master. Without moving it, the pin
+        # above is silently ignored on every re-run, which is the quietest
+        # possible way for a version pin to be untrue.
+        with ctx.spin(f"Reusing SatDump source — checking out {SATDUMP_VERSION}...") as spin_result:
+            ctx.run(["git", "-C", str(satdump_dir), "fetch", "--depth", "1",
+                     "origin", "tag", SATDUMP_VERSION], check=False)
+            spin_result.ok = ctx.run(
+                ["git", "-C", str(satdump_dir), "checkout", "--force", SATDUMP_VERSION],
+                check=False).returncode == 0
+        if not spin_result.ok:
+            ctx.log(f"[!] Could not move {satdump_dir} to {SATDUMP_VERSION} — building "
+                    f"whatever that directory holds, which may not be a release. "
+                    f"Delete it and re-run for a pinned build.", "warn")
     if not satdump_dir.is_dir():
         ctx.log("[!] SatDump source clone failed — SatDump NOT installed.", "err")
         return
 
-    # No version is pinned, so record what was built. Otherwise a node's
-    # SatDump is whatever upstream HEAD was on the day it was imaged, with
-    # nothing on the machine saying which.
+    # Recorded as well as pinned. The pin says what should have been built; this
+    # says what was, which still differ if the checkout above failed and warned.
     head = ctx.run(["git", "-C", str(satdump_dir), "rev-parse", "--short", "HEAD"], check=False)
     built_commit = (head.stdout or "").strip() or "unknown"
 
@@ -1892,10 +1922,18 @@ def optional_satdump(ctx: Ctx):
             spin_result.ok = False
 
     if build_failure is not None:
-        ctx.log("[!] SatDump build failed — SatDump NOT installed. Retry manually:", "err")
+        ctx.log(f"[!] SatDump build failed at {SATDUMP_VERSION} — SatDump NOT "
+                f"installed. Retry manually:", "err")
         ctx.log(f"    cd {build_dir} && cmake .. && make -j{jobs}", "err")
-        ctx.log("    If the compiler was killed rather than reporting an error, it ran "
-                "out of memory — retry with make -j1.", "err")
+        # Two failure modes, and the advice for one is useless for the other.
+        # This used to offer the memory explanation unconditionally, which sent
+        # an operator to `make -j1` after a linker error that -j1 cannot fix.
+        # The captured output is already in the log above; point at what in it
+        # tells them apart.
+        ctx.log("    Read the output above before retrying. A compiler KILLED with no "
+                "error ran out of memory — retry with make -j1. An error message, and "
+                "particularly a linker one, is a real build failure and -j1 will not "
+                "change it.", "err")
         # Re-raise the original rather than a fresh error: it carries the output,
         # and isolation adds a step to the failed list only when it raises. A
         # bare return logged at err level and still closed the run with
