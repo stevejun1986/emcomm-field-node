@@ -136,6 +136,20 @@ a file committed to git is stale the day it is committed. A curated set for the
 handful of birds a node actually works can be staged as `configs/satdump_tles.txt`,
 supplied by the group like every other profile — but it still needs refreshing.
 
+Which of those two arrangements the node got decides what first launch does:
+
+* **No `configs/satdump_tles.txt`** (the default — `configs/` ships empty). The
+  provisioner leaves SatDump's own fetch enabled and first launch pulls its full
+  default set, upwards of 16,000 objects. This is the normal case.
+* **A curated set supplied.** The provisioner stages it and switches SatDump's fetch
+  off, because the fetch would otherwise overwrite the staged file on first launch.
+  Element sets then only ever come from that file, so refreshing it is entirely the
+  group's responsibility.
+
+Either way the Tracking tab is the check: open SatDump, confirm it lists satellites.
+A node showing `0 TLEs loaded!` in the log has neither — stop and find out which
+half is missing before it deploys.
+
 ## 13. Full Dry Run
 Before the node counts as ready, exercise it end to end:
     - transmit and receive on each enabled mode, into a dummy load or on a net

@@ -14,8 +14,29 @@ real profiles in a private location; commit nothing here you would not publish.
 | `QMapShack.conf` | App profiles step | QMapShack settings profile |
 | `analog_channels.csv` | App profiles step | CHIRP channel list for analog radios |
 | `ale_channels.zcp` | App profiles step | ion2G HF ALE channel plan |
-| `satdump_tles.txt` | SatDump step | Curated TLE set |
+| `satdump_tles.txt` | SatDump step | Curated TLE set — **supplying one changes behavior**, see below |
 | `areas/*.json` | Map tile step | Bounding box for an operating area |
+
+---
+
+## `satdump_tles.txt` is a switch, not just a file
+
+Every other file here is additive: supply it and the step uses it, omit it and the
+step says so. This one also decides where the node's element sets come from for the
+rest of its life.
+
+**Omit it** — the normal case. SatDump's own TLE fetch is left alone, and first
+launch pulls its full default set, upwards of 16,000 objects. Nothing to maintain.
+
+**Supply it** and the provisioner stages the file *and switches SatDump's fetch
+off*. It has to: the fetch overwrites `satdump_tles.txt` on first launch, so a
+staged set survives only if the fetch cannot run. From then on the node's element
+sets come from your file and nowhere else — which means keeping it fresh is
+entirely yours. TLEs decay within days and badly past two weeks, and a stale one
+does not fail loudly, it points the dish at empty sky.
+
+Supply one only if you actually want that trade: a small set for the birds you work,
+refreshed on your own schedule, instead of everything, refreshed by SatDump.
 
 ---
 
