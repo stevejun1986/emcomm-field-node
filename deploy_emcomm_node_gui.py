@@ -1088,6 +1088,47 @@ Back up a known-good node and clone it to the rest of the fleet:
     meshtastic --export-config > node_backup.yaml
     meshtastic --configure node_backup.yaml
 
+## The USB port: what else on this machine may claim it
+
+Read this before troubleshooting a node that "is not detected". A serial
+port is an exclusive open -- first process wins, and the loser reports a
+broken radio rather than a conflict. Three things on a Mint node can get
+there first, and none of them care what your Meshtastic settings are.
+
+**gpsd, by bridge chip.** gpsd's hotplug rule
+(`/lib/udev/rules.d/25-gpsd.rules`) matches the USB-serial bridge by
+vendor and product ID -- PL2303, FTDI, CP210x are all in it. Meshtastic
+boards commonly use CP2102 or CH340, so plugging one in makes gpsd take
+an interest **whatever the node is configured to do**: with the Serial
+Module off, and regardless of the radio's own GPS. The hotplug only
+stashes the device path; gpsd opens it when a client asks for data,
+sniffs, and drops it if the output is not something it recognizes. So
+this is a collision window rather than a permanent hold -- but the
+window is a real open on the port, and the CLI loses if it is mid-
+conversation.
+
+**ModemManager.** Probes new `ttyUSB`/`ttyACM` devices for a modem,
+holding the port and sending AT commands for several seconds after
+plug-in. Usually a delay rather than a failure, but it is a delay that
+looks like a dead node.
+
+**brltty.** Claims CH340/CH341 adapters as braille displays. This one is
+the nastiest, because the device node does not go busy -- it does not
+appear at all, so the symptom is "nothing enumerated" rather than
+"something has it".
+
+Working out which:
+
+    ls -l /dev/serial/by-id/          # is it there at all -- if not, suspect brltty
+    sudo lsof /dev/ttyUSB0            # who holds it
+    systemctl is-active ModemManager gpsd.socket brltty
+
+The durable fix is to exclude the node's own VID:PID from whichever
+service is claiming it, the same way `/etc/modprobe.d/` keeps the kernel
+DVB-T driver off the RTL-SDR. Stopping gpsd works for a session and
+comes back on the next boot or dock event -- the dock autostart restarts
+`gpsd.socket` every time it runs.
+
 ## NMEA position output - LEAVE THIS OFF
 
 The Serial Module can emit NMEA 0183: a $GNGGA sentence for the node's
@@ -1098,15 +1139,19 @@ reporting a valid position, at 38400 8N1.
 whole of this section.** It is off by default, which is the correct
 state for this node.
 
-Turning it on makes the Meshtastic node look like a GPS receiver on a
-serial port. This machine runs gpsd, which exists to claim exactly
-that, and gpsd attaching to the node takes the port away from the
-Meshtastic CLI itself -- `meshtastic --info` then fails to open a
-device that is plainly plugged in, with nothing saying a GPS daemon
-holds it. Serial ports are an exclusive open: first process wins, and
-the loser reports a broken radio rather than a conflict. See
-`dongle_arbitration.md` under `SDR/` for the same failure on the
-RTL-SDR side.
+Turning it on escalates the gpsd problem described in the section
+above. With NMEA off, gpsd sniffs the port, fails to recognize the
+output and drops it. With NMEA on, the node *is* a GPS receiver as far
+as gpsd is concerned, so it keeps the port -- and `meshtastic --info`
+then fails to open a device that is plainly plugged in, with nothing
+saying a GPS daemon holds it. A momentary collision becomes a standing
+one. See `dongle_arbitration.md` under `SDR/` for the same failure on
+the RTL-SDR side.
+
+Note this is independent of the radio's own GPS. `position.gps_enabled`
+puts the node's location into mesh packets over LoRa and presents
+nothing to the host; leave it on if you want position in the mesh. It
+is the Serial Module below that puts data on the USB port.
 
 The integration it was added for does not work as described anyway:
 
