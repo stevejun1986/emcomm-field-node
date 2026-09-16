@@ -13,8 +13,16 @@ built once while online, then operates entirely offline.
 ## Supported Hardware
 
 **This package targets a Panasonic Toughbook CF-30 docked in a Havis DS-PAN-111
-series dock.** That is the reference build, and it is the only combination the
-dock-trigger automation is known to work on.
+series dock.** That is the reference build, and the only combination the
+dock-trigger automation is written for.
+
+> **The dock-trigger automation has never been observed running.** It installs and
+> verifies — the udev rule, the dispatcher, the user unit and the launcher are all
+> confirmed on disk — but no dock insertion has ever fired the chain, on any
+> hardware, including the reference build. Verification checks that those files
+> exist, which is not the same claim. Treat the whole step as untested: select it
+> if you have the hardware, and confirm it works before relying on it.
+> See **Verifying it actually fires** in `TESTING.md`.
 
 Two parts are tied to that hardware:
 
