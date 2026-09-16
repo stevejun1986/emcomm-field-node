@@ -226,21 +226,30 @@ Retagging every merge is wasted work: it moves a tag onto a tree that runs
 identically to the one before it, and it invalidates any artifact already built
 against that tag for no gain.
 
-### `v1.0.0` spans the pre-release and the release
+### The number moves whenever a script changes — pre-release included
 
-The pre-release and the first full release carry the **same** marker: `v1.0.0`.
-Script changes during that window are refinement of a release not yet out, not new
-versions of one already published. The pre-release flag comes off; the number does
-not move.
+A script change is a change to what someone runs, and the version is how they say
+which one they ran. That holds before the release ships as much as after, so the
+pre-release window is not exempt: `v1.0.0` was the first tag, `v1.0.1` the second,
+and they continue from there.
 
-Integers start increasing **after** the release ships. From then on a script
-change is categorized:
+Categorize by what the change does:
 
 | Change | Bump |
 | --- | --- |
 | Fixes a defect in existing behavior | PATCH — `1.0.1` |
 | Adds a step, a check, or a capability | MINOR — `1.1.0` |
 | Breaks an already-provisioned node or an existing config | MAJOR — `2.0.0` |
+
+Clearing the pre-release flag is not itself a version event. It changes how the
+release is labelled, not what the scripts do, so the number moves only if a script
+moved with it.
+
+This replaces an earlier rule under which `v1.0.0` covered the entire pre-release
+window and integers only began after shipping. It was dropped because a pre-release
+that receives fixes is still something people are running, and leaving every one of
+those trees stamped `1.0.0` puts one number on builds that behave differently —
+which is the problem the constant exists to prevent.
 
 ### The order, when a version does move
 
