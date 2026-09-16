@@ -2031,6 +2031,25 @@ def optional_dump1090(ctx: Ctx):
             "data. See the staged reference.", "warn")
 
 
+def _find_curated_tle_set():
+    """Return the group-supplied TLE set under configs/, or None.
+
+    Used by the SatDump step and by verification, which must agree: the step
+    decides whether to suppress SatDump's own TLE fetch, and the row reports
+    which of the two arrangements the node ended up with. Two copies of this
+    walk would let them disagree about the same node.
+    """
+    base_depth = len(Path("configs").resolve().parts)
+    for dirpath, dirnames, filenames in os.walk("configs"):
+        depth = len(Path(dirpath).resolve().parts) - base_depth
+        if depth >= 2:
+            dirnames[:] = []
+        for fn in filenames:
+            if re.search(r"tles.*\.txt$", fn, re.IGNORECASE):
+                return Path(dirpath) / fn
+    return None
+
+
 def optional_satdump(ctx: Ctx):
     # Built from source. Upstream ships .deb packages on GitHub releases but
     # runs no apt repository, so a packaged install meant carrying a .deb and
@@ -2204,28 +2223,42 @@ def optional_satdump(ctx: Ctx):
     ctx.satdump_system_installed = installed
 
     if ctx.satdump_installed:
-        ctx.log("[*] Deploying SatDump TLE configuration...", "info")
-        satdump_config_dir = ctx.home / ".config" / "satdump"
-        satdump_config_dir.mkdir(parents=True, exist_ok=True)
+        _configure_satdump_tles(ctx)
 
-        tle_src = None
-        base_depth = len(Path("configs").resolve().parts)
-        for dirpath, dirnames, filenames in os.walk("configs"):
-            depth = len(Path(dirpath).resolve().parts) - base_depth
-            if depth >= 2:
-                dirnames[:] = []
-            for fn in filenames:
-                if re.search(r"tles.*\.txt$", fn, re.IGNORECASE):
-                    tle_src = Path(dirpath) / fn
-                    break
-            if tle_src:
-                break
 
-        if tle_src:
-            shutil.copy(tle_src, satdump_config_dir / "satdump_tles.txt")
-            ctx.log(f"[+] Synced {tle_src} -> {satdump_config_dir}/satdump_tles.txt", "ok")
-        else:
-            ctx.log("[!] Warning: No TLE .txt file found under configs/ directory.", "warn")
+def _configure_satdump_tles(ctx: Ctx):
+    """Point SatDump at element sets, one of two ways.
+
+    Its own module-level function, like the two helpers above it, because the
+    build ahead of it cannot run on the bench: a stubbed clone returns before
+    this is reached, so inside the step neither branch is observable without a
+    real source build.
+    """
+    ctx.log("[*] Deploying SatDump TLE configuration...", "info")
+    satdump_config_dir = ctx.home / ".config" / "satdump"
+    satdump_config_dir.mkdir(parents=True, exist_ok=True)
+
+    tle_src = _find_curated_tle_set()
+
+    # Suppressing SatDump's TLE fetch only makes sense as protection for a
+    # curated set: the fetch overwrites satdump_tles.txt on first launch, so
+    # a staged file survives only if the fetch is off.
+    #
+    # With no curated set there is nothing to protect, and suppressing it
+    # anyway leaves the node with no element sets at all and no way to get
+    # any -- observed on a clean clone as SatDump logging "0 TLEs loaded!"
+    # with a working recorder. configs/ ships empty here by design, so that
+    # was the default outcome of every EmComm run, not an edge case. This
+    # step was ported from the sibling repository, which *does* commit a
+    # curated set; the suppression came with it and the empty case never
+    # got its own answer.
+    #
+    # Leaving the fetch alone is what the checklist has always told the
+    # operator to expect: "Open SatDump once, confirm the Tracking tab
+    # lists satellites."
+    if tle_src:
+        shutil.copy(tle_src, satdump_config_dir / "satdump_tles.txt")
+        ctx.log(f"[+] Synced {tle_src} -> {satdump_config_dir}/satdump_tles.txt", "ok")
 
         satdump_global_cfg = Path("/usr/share/satdump/satdump_cfg.json")
         if satdump_global_cfg.is_file():
@@ -2233,41 +2266,51 @@ def optional_satdump(ctx: Ctx):
             text = satdump_global_cfg.read_text()
             text = re.sub(
                 r'^( *)("http://celestrak\.org/NORAD/elements/gp\.php\?GROUP=active&FORMAT=tle")',
-                r"\1// \1\2", text, flags=re.MULTILINE)
+                r"\1// \2", text, flags=re.MULTILINE)
             text = re.sub(r"^( *)29499,", r"\1// 29499,", text, flags=re.MULTILINE)
             text = re.sub(r"^( *)35865 ", r"\1// 35865 ", text, flags=re.MULTILINE)
             ctx.sudo_write(str(satdump_global_cfg), text)
-            ctx.log(f"[+] Disabled SatDump global bulk TLE fetch (backup: {satdump_global_cfg}.{PROJECT}-backup).", "ok")
+            ctx.log(f"[+] Curated set staged — disabled SatDump global bulk TLE fetch "
+                    f"(backup: {satdump_global_cfg}.{PROJECT}-backup).", "ok")
         else:
-            ctx.log(f"[!] SatDump global config not found at {satdump_global_cfg} — bulk TLE fetch NOT disabled.", "warn")
+            ctx.log(f"[!] SatDump global config not found at {satdump_global_cfg} — bulk "
+                    f"TLE fetch NOT disabled, and it will overwrite the curated set on "
+                    f"first launch.", "warn")
 
+        # Typed empties, not null. SatDump reads these as vector<string>,
+        # string and vector<int>; a null is a type error rather than a
+        # disable, and was observed sending the node down a worse fetch
+        # path with an error dialog on first launch (issue #26).
         satdump_settings = satdump_config_dir / "settings.json"
         if not satdump_settings.is_file():
             satdump_settings.write_text(json.dumps({
-                "tle_settings": {"urls_to_fetch": None, "url_template": None, "tles_to_fetch": None}
+                "tle_settings": {"urls_to_fetch": [], "url_template": "", "tles_to_fetch": []}
             }, indent=4) + "\n")
             ctx.log("[+] Pre-seeded settings.json to disable user-level TLE auto-fetch.", "ok")
         else:
             ctx.log("[+] settings.json already exists — leaving as-is.", "ok")
+    else:
+        ctx.log("[*] No curated TLE set under configs/ — leaving SatDump's own TLE "
+                "fetch enabled, so first launch loads its full default set.", "info")
 
-        # SatDump does its first-run setup and its TLE fetch when the GUI is
-        # launched, not when it is installed -- its own config calls this "auto
-        # update happens at launch only". A node that goes to the field having
-        # never had SatDump opened therefore arrives with no element sets, and
-        # discovers it during a pass rather than on the bench.
-        #
-        # Nothing automated can substitute for this: the fetch needs network,
-        # and provisioning is the last point at which the node reliably has it.
-        # Element sets also decay in days, so this is a pre-deployment action
-        # and not a one-time install step -- a node imaged in March and
-        # deployed in June needs it again. Said here because the operator is
-        # looking at the screen now, and again in the checklist because that is
-        # what gets worked before a node ships.
-        ctx.log("[!] LAUNCH SATDUMP ONCE WHILE STILL ONLINE, before this node goes "
-                "to the field. First launch is when it writes its runtime config and "
-                "fetches TLEs; a node that has never had it opened has no element "
-                "sets and cannot predict a pass. TLEs decay within days, so repeat "
-                "this shortly before deployment.", "warn")
+    # SatDump does its first-run setup and its TLE fetch when the GUI is
+    # launched, not when it is installed -- its own config calls this "auto
+    # update happens at launch only". A node that goes to the field having
+    # never had SatDump opened therefore arrives with no element sets, and
+    # discovers it during a pass rather than on the bench.
+    #
+    # Nothing automated can substitute for this: the fetch needs network,
+    # and provisioning is the last point at which the node reliably has it.
+    # Element sets also decay in days, so this is a pre-deployment action
+    # and not a one-time install step -- a node imaged in March and
+    # deployed in June needs it again. Said here because the operator is
+    # looking at the screen now, and again in the checklist because that is
+    # what gets worked before a node ships.
+    ctx.log("[!] LAUNCH SATDUMP ONCE WHILE STILL ONLINE, before this node goes "
+            "to the field. First launch is when it writes its runtime config and "
+            "fetches TLEs; a node that has never had it opened has no element "
+            "sets and cannot predict a pass. TLEs decay within days, so repeat "
+            "this shortly before deployment.", "warn")
 
 
 def finalize(ctx: Ctx):
@@ -2721,12 +2764,22 @@ def verify_deployment(ctx: Ctx, selected_ids: set) -> list:
             # which is a consequence of the failure above rather than a finding
             # of its own.
             #
-            # Both remaining cases still report. A failed `make install` leaves
-            # the build-tree binary, and a successful build with no TLE source
-            # under configs/ warns -- which on a node imaged from a populated
-            # configs/ is a real staging fault, not an absent optional.
-            want(home / ".config" / "satdump" / "satdump_tles.txt",
-                 "SatDump TLE set staged", hard=False)
+            # Which row applies depends on whether the group supplied a curated
+            # set, because that is what decides the arrangement the node got.
+            # With one, the file must be on disk now and its absence is a real
+            # staging fault. Without one, nothing is staged on purpose and the
+            # element sets arrive on first launch -- reporting "missing" there
+            # would flag the default, correct outcome as a defect.
+            #
+            # Neither row proves the node can predict a pass: that needs the
+            # first launch the checklist calls for, and the run log carries
+            # that as its own warning.
+            if _find_curated_tle_set():
+                want(home / ".config" / "satdump" / "satdump_tles.txt",
+                     "SatDump TLE set staged", hard=False)
+            else:
+                add("SatDump TLE source", "pass",
+                    "no curated set; SatDump's own fetch left enabled, loads on first launch")
         else:
             add("SatDump available", "fail", "no satdump binary found (package or build)")
 
