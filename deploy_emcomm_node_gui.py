@@ -1088,18 +1088,56 @@ Back up a known-good node and clone it to the rest of the fleet:
     meshtastic --export-config > node_backup.yaml
     meshtastic --configure node_backup.yaml
 
-## NMEA position output (optional - for mapping integration)
+## NMEA position output - LEAVE THIS OFF
 
 The Serial Module can emit NMEA 0183: a $GNGGA sentence for the node's
 own position, plus $GPWPL waypoint sentences for every mesh peer
-reporting a valid position. Read at 38400 8N1.
+reporting a valid position, at 38400 8N1.
+
+**Do not enable it unless you have a specific need and have read the
+whole of this section.** It is off by default, which is the correct
+state for this node.
+
+Turning it on makes the Meshtastic node look like a GPS receiver on a
+serial port. This machine runs gpsd, which exists to claim exactly
+that, and gpsd attaching to the node takes the port away from the
+Meshtastic CLI itself -- `meshtastic --info` then fails to open a
+device that is plainly plugged in, with nothing saying a GPS daemon
+holds it. Serial ports are an exclusive open: first process wins, and
+the loser reports a broken radio rather than a conflict. See
+`dongle_arbitration.md` under `SDR/` for the same failure on the
+RTL-SDR side.
+
+The integration it was added for does not work as described anyway:
+
+* **gpsd cannot carry the peer waypoints.** Its client protocol reports
+  TPV and SKY objects -- time/position/velocity and satellite data for
+  the *host's own* fix. There is no waypoint object in that protocol, so
+  $GPWPL sentences have nowhere to go regardless of whether gpsd parses
+  them.
+* **QMapShack does not read gpsd.** Its realtime sources are OpenSky
+  flight data, AIS vessel positions, and GPS location data over a TCP
+  NMEA connection -- not the gpsd daemon. A serial-to-TCP bridge would
+  be needed, and that still only moves the node's own position.
+
+If you want mesh peer positions on the map, the path that actually
+works is a file, not a live feed: read the node list and convert it to
+GPX, which QMapShack imports directly.
+
+    meshtastic --nodes
+
+To turn it on anyway, knowing the above:
 
     meshtastic --set serial.enabled true
     meshtastic --set serial.mode NMEA
 
-UNVERIFIED: whether gpsd ingests $GPWPL peer waypoints usefully, and
-whether QMapShack renders them. Test before relying on it for
-situational awareness.
+and expect to arbitrate the port against gpsd yourself -- masking
+gpsd's udev hook for that device, or stopping gpsd before using the
+CLI.
+
+UNVERIFIED: the gpsd and QMapShack behavior above is read from their
+documentation, not observed on this node. The $GPWPL-to-GPX conversion
+is not written; nothing in this repository does it for you.
 
 ## Operating note: this is an open net
 
