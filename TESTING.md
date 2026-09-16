@@ -40,7 +40,7 @@ before an hour of package installation.
 | 10 | dump1090 (ADS-B) | Preseeded install, so no debconf prompt should stall it. **Three separate things must hold, and the first alone is not enough**: not enabled at boot (`systemctl is-enabled` → disabled) and not in the autostart sequence, since it and SatDump cannot share the dongle; startable on demand (`grep START_DUMP1090 /etc/default/dump1090-mutability` → `"yes"`, the switch the init script tests on every start); and able to open the dongle (`id dump1090` lists `plugdev`, since the device node is `root:plugdev 0660`). With a dongle attached, `sudo service dump1090-mutability start` should populate `/run/dump1090-mutability/aircraft.json` within a second or two — an empty directory means it started and died. The lighttpd map arrives on the distribution default, not loopback: `ss -ltnp | grep lighttpd` |
 | 10b | RTL-SDR dongle arbitration | Only meaningful with a dongle attached **and both** dump1090 and SatDump installed. The run should print a `BOTH … are installed` warning naming `EMCOMM_Data/SDR/dongle_arbitration.md`, and the verification should show **RTL-SDR dongle reference staged**. Confirm the contention is real: start dump1090, then `rtl_test -t` should fail; stop it (`service stop` **and** `pkill -x dump1090-mutability` — the first misses a hand-launched copy) and `rtl_test -t` should succeed. Also confirm the kernel is out of the way: `/etc/modprobe.d/emcomm-rtlsdr.conf` should exist and `lsmod \| grep -i rtl28xxu` should be empty. Unplug and replug the dongle — the driver must not come back. If `rtl_test` fails with nothing running at all, that blacklist is the first thing to check |
 | 11 | SatDump | Always a source build; the longest step. Confirm `satdump` reaches `PATH` after `make install`. Toolchain and libraries install as two apt transactions, so a bad library name cannot cost the compiler; each resolves to its own cross and cmake's output reaches the run log. Retrying after a failed configure is safe — the stale `CMakeCache.txt` is discarded, since cmake would otherwise reuse its NOTFOUND results. The TLE row is only checked when a binary exists — TLE staging runs after the build, so with no binary its absence is a consequence, not a second fault. TLE handling then depends on whether `configs/satdump_tles.txt` exists: with no curated set (the default, since `configs/` ships empty) SatDump's own fetch is left enabled and first launch loads its full default set; with one, it is staged and the fetch is switched off so it cannot overwrite it. The log says which arrangement was applied. Then open SatDump and confirm the Tracking tab lists satellites — `0 TLEs loaded!` means neither happened, and the node cannot predict a pass |
-| 12 | Dock-trigger autostart | **Havis DS-PAN-111 + CF-30 only.** The udev rule matches that dock's hub (`05e3:0610`) — it is the real ID, not a placeholder. On other hardware the files install and the rule simply never fires. See **Supported Hardware** in the README |
+| 12 | Dock-trigger autostart | **Havis DS-PAN-111 + CF-30 only, and never yet observed firing — see *Verifying it actually fires* below.** The udev rule matches that dock's hub (`05e3:0610`) — it is the real ID, not a placeholder. On other hardware the files install and the rule simply never fires. Verification confirms the four artifacts exist; it does not and cannot confirm a dock event does anything. See **Supported Hardware** in the README |
 | 13 | Slim appliance build | Destructive — `apt purge`s preinstalled apps and disables mintupdate. Test last, on a VM you can roll back |
 
 ## The check that matters most
@@ -59,6 +59,60 @@ grep -nE "PLACEHOLDER|/home/" ~/.config/QLandkarteGT/QMapShack.conf
 `MyCall` must be the callsign you entered. `MyGrid` should be empty. No
 `PLACEHOLDER` token should remain anywhere — a literal token that survives is
 used as a real value, which is worse than a missing setting.
+
+## Dock trigger: verifying it actually fires
+
+**This chain has never been observed running — on any hardware, including the
+reference CF-30 and DS-PAN-111.** It is written, installed and verified present.
+Whether a dock insertion actually launches anything is unknown.
+
+Verification's five rows — `Autostart launcher installed`, `Autostart launcher
+executable` (nested inside the first), `Autostart user unit installed`, `Dock-event
+dispatcher installed`, `udev dock rule installed` — all pass on a machine that has
+never seen a dock. They
+attest that files were written. That is not the same claim, and no automated check
+here can make the stronger one: `tests/dryrun.py` stubs the subprocesses by design,
+and a VM cannot present a `05e3:0610` insertion to a live XFCE session.
+
+Five links have to hold, and only the first is hardware-specific:
+
+1. udev matches `05e3:0610` on insertion
+2. `RUN+=` invokes `/usr/local/bin/emcomm-dock-event.sh`
+3. the dispatcher crosses from udev's context into the user session
+4. the unit runs with a usable `DISPLAY` and `XAUTHORITY`
+5. the sequence launches applications in order, and its lockfile survives a bounce
+
+Links 3 and 4 are the fragile ones. A udev `RUN+=` runs as root with a minimal
+environment, no session, and a short timeout; reaching a live user session from there
+is where this kind of thing usually breaks.
+
+With the hardware, dock the machine and work down the chain — each command tells you
+which link failed:
+
+```bash
+udevadm monitor --environment --udev | grep -i 05e3    # 1: does udev see it
+journalctl -b --grep=EMCOMM                            # 2-3: dispatcher logged
+systemctl --user status emcomm-autostart.service       # 4: did the unit run
+cat ~/.emcomm/autostart.log                            # 5: what the sequence did
+loginctl show-user "$USER" -p Linger                   # must be Linger=yes
+```
+
+`Linger=yes` matters: without it the user manager may not be running when udev fires,
+and link 3 fails with nothing obviously wrong anywhere else.
+
+The dispatcher calls `logger` without `-t`, so its lines carry the invoking user as
+the syslog tag rather than `emcomm` — `journalctl -t emcomm` finds nothing even when
+it did run. Match on the message text instead, as above.
+
+To exercise it without a dock, run the dispatcher by hand as root. That skips link 1
+and tests 2-5, which are the parts most likely to be wrong:
+
+```bash
+sudo /usr/local/bin/emcomm-dock-event.sh
+```
+
+If that works and a real docking does not, the problem is the udev match. If it fails,
+the problem is in the session crossing and a dock would not have helped.
 
 ## Re-running steps
 
