@@ -85,7 +85,10 @@ Installed and configured by the provisioner:
 * **Positioning & time sync:** `gpsd`, `chrony`
 * **HF digital:** JS8Call (weak-signal keyboard messaging), ion2G (HF ALE, via Wine)
 * **Packet / APRS:** Direwolf (AX.25 software TNC for a sound-card interface)
-* **Mesh:** Meshtastic CLI (manages an external 915 MHz LoRa node)
+* **Mesh:** Meshtastic CLI (manages an external 915 MHz LoRa node) — installed into
+  the operator's user site with `python3 -m pip install --user
+  --break-system-packages meshtastic`, so `meshtastic` lands on `~/.local/bin` and
+  is importable by the system `python3` the GPX bridge runs under
 * **Radio programming:** CHIRP
 * **Station logging:** QLog (via Flatpak)
 * **Mapping:** QMapShack with offline tile sources auto-registered

@@ -2019,8 +2019,10 @@ def poll_once(port=None, timeout=30):
     try:
         from meshtastic.serial_interface import SerialInterface
     except ImportError:
-        _log("[!] the 'meshtastic' package is not importable — this script must run "
-             "under the provisioner's meshtastic venv interpreter.")
+        _log("[!] the 'meshtastic' package is not importable by this interpreter "
+             "(%s). The provisioner installs it into the operator's user site: "
+             "python3 -m pip install --user --break-system-packages meshtastic"
+             % sys.executable)
         return None
 
     iface = None
@@ -2124,7 +2126,7 @@ WantedBy=default.target
 """
 
 
-def _install_mesh_gpx_bridge(ctx: Ctx, meshtastic_venv: Path) -> bool:
+def _install_mesh_gpx_bridge(ctx: Ctx, python3: str) -> bool:
     """Mesh -> GPX bridge, installed only when QMapShack is also present.
 
     Conditional because the bridge has exactly one consumer. On a node with
@@ -2154,20 +2156,20 @@ def _install_mesh_gpx_bridge(ctx: Ctx, meshtastic_venv: Path) -> bool:
     output.parent.mkdir(parents=True, exist_ok=True)
 
     # On PATH so the operator can force a poll by hand -- the first thing to
-    # do when the map looks wrong -- using the venv interpreter rather than
-    # the system one, which has no meshtastic package.
+    # do when the map looks wrong. It names the interpreter explicitly rather
+    # than relying on a shebang, so it keeps working if ~/.local/bin is not
+    # yet on PATH.
     local_bin = ctx.home / ".local" / "bin"
     local_bin.mkdir(parents=True, exist_ok=True)
     wrapper = local_bin / "emcomm-mesh-gpx"
-    wrapper.write_text('#!/bin/bash\nexec "%s/bin/python" "%s" "$@"\n'
-                       % (meshtastic_venv, script))
+    wrapper.write_text('#!/bin/bash\nexec "%s" "%s" "$@"\n' % (python3, script))
     wrapper.chmod(0o755)
 
     systemd_user = ctx.home / ".config" / "systemd" / "user"
     systemd_user.mkdir(parents=True, exist_ok=True)
     (systemd_user / MESH_GPX_UNIT_NAME).write_text(MESH_GPX_UNIT % {
         "home": ctx.home,
-        "python": meshtastic_venv / "bin" / "python",
+        "python": python3,
         "script": script,
         "interval": MESH_GPX_INTERVAL,
         "output": output,
@@ -2197,35 +2199,55 @@ def _install_mesh_gpx_bridge(ctx: Ctx, meshtastic_venv: Path) -> bool:
 
 
 def optional_meshtastic(ctx: Ctx):
-    # Noble enforces PEP 668 (externally-managed environment), so a bare
-    # 'pip install' is refused. Use an isolated venv rather than
-    # --break-system-packages, to avoid touching system Python packages.
-    meshtastic_venv = ctx.home / APPS_DIR_NAME / "meshtastic-venv"
-    meshtastic_bin = meshtastic_venv / "bin" / "meshtastic"
+    # Installed into the operator's user site rather than an isolated venv.
+    # Noble enforces PEP 668, so this needs --break-system-packages to be
+    # permitted at all; --user keeps it out of /usr/lib and confines it to
+    # ~/.local, so "break system packages" overstates what actually happens
+    # here. The package is 'meshtastic' -- there is no 'meshtastic-cli' on
+    # PyPI -- and it is what provides the `meshtastic` console script.
+    #
+    # `python3 -m pip` rather than `pip3`: it pins the install to the
+    # interpreter that will import it. The GPX bridge below runs under that
+    # same interpreter, and a pip3 belonging to a different python is exactly
+    # how a step comes to report a successful install of something the next
+    # step cannot import.
+    python3 = shutil.which("python3") or sys.executable
+    local_bin = ctx.home / ".local" / "bin"
+    meshtastic_bin = local_bin / "meshtastic"
     ok = False
 
     with ctx.spin("Installing Meshtastic Python CLI...") as spin_result:
-        ctx.sudo("apt", "install", "-y", "python3-venv", "python3-full", check=False)
-        ctx.run([sys.executable, "-m", "venv", str(meshtastic_venv)], check=False)
-        ctx.run([str(meshtastic_venv / "bin" / "pip"), "install", "--upgrade", "pip"], check=False)
-        pip_status = ctx.run([str(meshtastic_venv / "bin" / "pip"), "install", "meshtastic"],
-                              check=False).returncode
-        ok = (pip_status == 0) and os.access(meshtastic_bin, os.X_OK)
+        pip_status = ctx.run([python3, "-m", "pip", "install", "--user",
+                              "--break-system-packages", "meshtastic"],
+                             check=False).returncode
+        # The console script landing on disk is the presence half; being
+        # importable by the interpreter that will run the bridge is the half
+        # that matters. Both, or this did not work.
+        importable = ctx.run([python3, "-c", "import meshtastic"],
+                             check=False).returncode == 0
+        ok = (pip_status == 0) and os.access(meshtastic_bin, os.X_OK) and importable
         spin_result.ok = ok
 
     if not ok:
-        ctx.log("[!] Meshtastic CLI install failed — check log above.", "err")
+        ctx.log(f"[!] Meshtastic CLI install failed (pip exit {pip_status}, "
+                f"console script {'present' if meshtastic_bin.is_file() else 'absent'}, "
+                f"import {'ok' if importable else 'failed'}) — check log above.", "err")
         return
 
-    ctx.log(f"[+] Meshtastic CLI installed to {meshtastic_venv}", "ok")
+    ctx.log(f"[+] Meshtastic CLI installed to {meshtastic_bin}", "ok")
 
-    # Wrapper on PATH so the operator can just run 'meshtastic'
-    local_bin = ctx.home / ".local" / "bin"
-    local_bin.mkdir(parents=True, exist_ok=True)
-    wrapper = local_bin / "meshtastic"
-    wrapper.write_text(f'#!/bin/bash\nexec "{meshtastic_venv}/bin/meshtastic" "$@"\n')
-    wrapper.chmod(0o755)
-    ctx.log("[+] Wrapper installed at ~/.local/bin/meshtastic", "ok")
+    # No wrapper is written. pip puts its own console script at exactly this
+    # path, and the wrapper this step used to write would overwrite it --
+    # leaving a script pointing at a venv that no longer exists.
+    #
+    # ~/.local/bin reaches PATH through ~/.profile, which adds it only `if [ -d
+    # "$HOME/.local/bin" ]` -- evaluated at login. On a node where that
+    # directory did not exist when the operator logged in, `meshtastic` is
+    # installed and still "command not found" until the next login.
+    if str(local_bin) not in os.environ.get("PATH", "").split(os.pathsep):
+        ctx.log("[!] ~/.local/bin is not on this session's PATH — `meshtastic` will be "
+                "'command not found' until you log out and back in. That is the same "
+                "login 'dialout' needs below.", "warn")
 
     # Serial port access — Meshtastic nodes enumerate as ttyUSB*/ttyACM*.
     # Without dialout membership the CLI fails with a permission error.
@@ -2246,7 +2268,7 @@ def optional_meshtastic(ctx: Ctx):
     ctx.log(f"[+] Meshtastic setup reference staged to {meshtastic_dir}/", "ok")
     ctx.log("[!] Meshtastic node config is NOT applied automatically — see the staged reference.", "warn")
 
-    _install_mesh_gpx_bridge(ctx, meshtastic_venv)
+    _install_mesh_gpx_bridge(ctx, python3)
 
 
 def _build_jobs() -> int:
@@ -3223,8 +3245,19 @@ def verify_deployment(ctx: Ctx, selected_ids: set) -> list:
 
     if "meshtastic" in selected_ids:
         want(home / ".local" / "bin" / "meshtastic", "Meshtastic wrapper on PATH")
-        want(home / APPS_DIR_NAME / "meshtastic-venv" / "bin" / "meshtastic",
-             "Meshtastic CLI installed in venv")
+        # A capability check, not a path check: the console script can be on
+        # disk while the package is uninstallable by the interpreter that has
+        # to import it, and the bridge is what would then fail -- silently,
+        # two steps later.
+        python3 = shutil.which("python3") or sys.executable
+        importable = subprocess.run([python3, "-c", "import meshtastic"],
+                                    stdin=subprocess.DEVNULL, capture_output=True,
+                                    text=True).returncode == 0
+        add("Meshtastic package importable by python3",
+            "pass" if importable else "fail",
+            "%s can import meshtastic" % python3 if importable
+            else "%s cannot import meshtastic — the CLI and the GPX bridge both "
+                 "need it" % python3)
         groups = subprocess.run(["id", "-nG", ctx.user], stdin=subprocess.DEVNULL,
                                 capture_output=True, text=True).stdout.split()
         add("Operator in 'dialout' group", "pass" if "dialout" in groups else "warn",
@@ -3807,6 +3840,27 @@ class ProvisionerGUI(tk.Tk):
         self.verify_tree.configure(yscrollcommand=sb.set)
         sb.pack(side="right", fill="y")
         self.verify_tree.pack(side="left", fill="both", expand=True)
+
+        # Sits between the table and the buttons, so it is in the operator's
+        # eye-line on the way to Continue rather than below the fold.
+        #
+        # Several things a run installs only work after a fresh login, and they
+        # fail in ways that point away from the cause: 'meshtastic' is "command
+        # not found" because ~/.local/bin joins PATH from ~/.profile only if it
+        # existed at login; the CLI hits a permission error because 'dialout' is
+        # not in effect yet; an enabled user service has not started because it
+        # was enabled, not started. All of them are one logout away, and none
+        # says so at the moment it fails.
+        self.verify_relogin = ttk.Label(
+            f,
+            text=("\u26a0  Log out and back in \u2014 or reboot \u2014 before using this node.\n"
+                  "     PATH, group membership and user services are all read at login. "
+                  "Until then `meshtastic` reads as 'command not found', the CLI hits "
+                  "permission errors on the serial port, and any service this run "
+                  "enabled has not started yet. Nothing here is broken; it is waiting "
+                  "for a login."),
+            wraplength=760, justify="left", foreground="#b8860b")
+        self.verify_relogin.pack(anchor="w", pady=(12, 0))
 
         btns = ttk.Frame(f)
         btns.pack(fill="x", pady=(10, 0))
