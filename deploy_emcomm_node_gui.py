@@ -1088,18 +1088,101 @@ Back up a known-good node and clone it to the rest of the fleet:
     meshtastic --export-config > node_backup.yaml
     meshtastic --configure node_backup.yaml
 
-## NMEA position output (optional - for mapping integration)
+## The USB port: what else on this machine may claim it
+
+Read this before troubleshooting a node that "is not detected". A serial
+port is an exclusive open -- first process wins, and the loser reports a
+broken radio rather than a conflict. Three things on a Mint node can get
+there first, and none of them care what your Meshtastic settings are.
+
+**gpsd, by bridge chip.** gpsd's hotplug rule
+(`/lib/udev/rules.d/25-gpsd.rules`) matches the USB-serial bridge by
+vendor and product ID -- PL2303, FTDI, CP210x are all in it. Meshtastic
+boards commonly use CP2102 or CH340, so plugging one in makes gpsd take
+an interest **whatever the node is configured to do**: with the Serial
+Module off, and regardless of the radio's own GPS. The hotplug only
+stashes the device path; gpsd opens it when a client asks for data,
+sniffs, and drops it if the output is not something it recognizes. So
+this is a collision window rather than a permanent hold -- but the
+window is a real open on the port, and the CLI loses if it is mid-
+conversation.
+
+**ModemManager.** Probes new `ttyUSB`/`ttyACM` devices for a modem,
+holding the port and sending AT commands for several seconds after
+plug-in. Usually a delay rather than a failure, but it is a delay that
+looks like a dead node.
+
+**brltty.** Claims CH340/CH341 adapters as braille displays. This one is
+the nastiest, because the device node does not go busy -- it does not
+appear at all, so the symptom is "nothing enumerated" rather than
+"something has it".
+
+Working out which:
+
+    ls -l /dev/serial/by-id/          # is it there at all -- if not, suspect brltty
+    sudo lsof /dev/ttyUSB0            # who holds it
+    systemctl is-active ModemManager gpsd.socket brltty
+
+The durable fix is to exclude the node's own VID:PID from whichever
+service is claiming it, the same way `/etc/modprobe.d/` keeps the kernel
+DVB-T driver off the RTL-SDR. Stopping gpsd works for a session and
+comes back on the next boot or dock event -- the dock autostart restarts
+`gpsd.socket` every time it runs.
+
+## NMEA position output - LEAVE THIS OFF
 
 The Serial Module can emit NMEA 0183: a $GNGGA sentence for the node's
 own position, plus $GPWPL waypoint sentences for every mesh peer
-reporting a valid position. Read at 38400 8N1.
+reporting a valid position, at 38400 8N1.
+
+**Do not enable it unless you have a specific need and have read the
+whole of this section.** It is off by default, which is the correct
+state for this node.
+
+Turning it on escalates the gpsd problem described in the section
+above. With NMEA off, gpsd sniffs the port, fails to recognize the
+output and drops it. With NMEA on, the node *is* a GPS receiver as far
+as gpsd is concerned, so it keeps the port -- and `meshtastic --info`
+then fails to open a device that is plainly plugged in, with nothing
+saying a GPS daemon holds it. A momentary collision becomes a standing
+one. See `dongle_arbitration.md` under `SDR/` for the same failure on
+the RTL-SDR side.
+
+Note this is independent of the radio's own GPS. `position.gps_enabled`
+puts the node's location into mesh packets over LoRa and presents
+nothing to the host; leave it on if you want position in the mesh. It
+is the Serial Module below that puts data on the USB port.
+
+The integration it was added for does not work as described anyway:
+
+* **gpsd cannot carry the peer waypoints.** Its client protocol reports
+  TPV and SKY objects -- time/position/velocity and satellite data for
+  the *host's own* fix. There is no waypoint object in that protocol, so
+  $GPWPL sentences have nowhere to go regardless of whether gpsd parses
+  them.
+* **QMapShack does not read gpsd.** Its realtime sources are OpenSky
+  flight data, AIS vessel positions, and GPS location data over a TCP
+  NMEA connection -- not the gpsd daemon. A serial-to-TCP bridge would
+  be needed, and that still only moves the node's own position.
+
+If you want mesh peer positions on the map, the path that actually
+works is a file, not a live feed: read the node list and convert it to
+GPX, which QMapShack imports directly.
+
+    meshtastic --nodes
+
+To turn it on anyway, knowing the above:
 
     meshtastic --set serial.enabled true
     meshtastic --set serial.mode NMEA
 
-UNVERIFIED: whether gpsd ingests $GPWPL peer waypoints usefully, and
-whether QMapShack renders them. Test before relying on it for
-situational awareness.
+and expect to arbitrate the port against gpsd yourself -- masking
+gpsd's udev hook for that device, or stopping gpsd before using the
+CLI.
+
+UNVERIFIED: the gpsd and QMapShack behavior above is read from their
+documentation, not observed on this node. The $GPWPL-to-GPX conversion
+is not written; nothing in this repository does it for you.
 
 ## Operating note: this is an open net
 
