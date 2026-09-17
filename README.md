@@ -16,13 +16,24 @@ built once while online, then operates entirely offline.
 series dock.** That is the reference build, and the only combination the
 dock-trigger automation is written for.
 
-> **The dock-trigger automation has never been observed running.** It installs and
-> verifies — the udev rule, the dispatcher, the user unit and the launcher are all
-> confirmed on disk — but no dock insertion has ever fired the chain, on any
-> hardware, including the reference build. Verification checks that those files
-> exist, which is not the same claim. Treat the whole step as untested: select it
-> if you have the hardware, and confirm it works before relying on it.
-> See **Verifying it actually fires** in `TESTING.md`.
+> **The dock-trigger automation is a future feature, and is stated as one
+> deliberately.** It is *being designed for* the combination above — a CF-30 in a
+> DS-PAN-111 dock — which is the design target, not a tested configuration.
+>
+> It installs and verifies: the udev rule, the dispatcher, the user unit and the
+> launcher are all confirmed on disk. But **no dock insertion has ever fired the
+> chain**, on any hardware, including the reference build, and there is no dock
+> available to this project to readily test against. Verification checks that
+> those files exist, which is not the same claim — so it now carries a fifth row
+> saying the chain has never been seen to fire, and the run says the same thing
+> at the end of the step.
+>
+> It stays in the provisioner and stays selectable, because the work belongs in
+> the tree where it can be developed. Treat it as in development: select it if you
+> have the hardware and intend to work on it, and do not build a deployment that
+> depends on it firing. **Further development against the hardware is what would
+> change this.** See **Verifying it actually fires** in `TESTING.md` for the five
+> links in the chain and how to test each one.
 
 Two parts are tied to that hardware:
 
@@ -87,8 +98,9 @@ Installed and configured by the provisioner:
   dump1090 alone still has it
 * **ADS-B aircraft tracking:** dump1090 (via RTL-SDR) — installed but **not**
   started automatically; see the note below
-* **Automation:** optional dock-triggered autostart (udev + systemd), desktop
-  shortcuts
+* **Automation:** desktop shortcuts
+* **Dock-triggered autostart (udev + systemd):** optional, installed by the
+  provisioner, and **not a finished feature** — see **Supported Hardware** above
 
 ### ADS-B and SatDump share one dongle
 

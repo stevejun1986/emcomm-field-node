@@ -1764,6 +1764,23 @@ logger "{OPERATOR_PREFIX}: dock event dispatched to user session (uid $USER_UID)
     ctx.sudo("loginctl", "enable-linger", ctx.user)
     ctx.log(f"[+] Linger enabled for {ctx.user}.", "ok")
 
+    # Four files land and each reports success, which is the whole of what this
+    # step can demonstrate. The chain they form -- dock insertion, udev rule,
+    # dispatcher, user unit, launcher -- has never been observed to run, and
+    # there is no dock on hand to try it against. README.md and TESTING.md both
+    # say so; neither is open at the moment the operator watches four green
+    # lines go by, which is when the claim is actually being made.
+    ctx.log("[!] Dock-trigger automation is a FUTURE FEATURE — installed, not proven.", "warn")
+    ctx.log("    It is being designed for a Panasonic Toughbook CF-30 in a Havis "
+            "DS-PAN-111 dock. The udev rule matches that dock's hub (05e3:0610) — a "
+            "real ID, but one no dock event has ever been seen to match here.", "warn")
+    ctx.log("    No dock insertion has ever been observed to fire this chain, on that "
+            "hardware or any other. The files above are on disk; that is all that has "
+            "been confirmed.", "warn")
+    ctx.log("    Further development against the hardware is needed before a deployment "
+            "relies on it — see 'Dock trigger: verifying it actually fires' in "
+            "TESTING.md.", "warn")
+
 
 def optional_direwolf(ctx: Ctx):
     with ctx.spin("Installing Direwolf...") as spin_result:
@@ -2515,7 +2532,9 @@ COMPONENTS: list[Component] = [
     Component("kiwix_zim", "Offline knowledgebase (Kiwix ZIM)", step_kiwix_zim),
     Component("docs_server", "Reference library + document server", step_docs_server),
     Component("config_profiles", "App profiles + ALE channel plan", step_config_profiles),
-    Component("dock_trigger", "Dock-trigger autostart (Havis dock only)", step_dock_trigger),
+    Component("dock_trigger",
+              "Dock-trigger autostart (Havis dock only) — FUTURE FEATURE, unproven",
+              step_dock_trigger),
     Component("direwolf", "Direwolf (AX.25 / APRS software TNC)", optional_direwolf),
     Component("meshtastic", "Meshtastic CLI (LoRa mesh node tooling)", optional_meshtastic),
     Component("dump1090", "dump1090 (ADS-B aircraft tracking, RTL-SDR)", optional_dump1090),
@@ -2800,6 +2819,14 @@ def verify_deployment(ctx: Ctx, selected_ids: set) -> list:
              "Autostart user unit installed")
         want(Path(DOCK_EVENT_SH), "Dock-event dispatcher installed")
         want(Path("/etc/udev/rules.d/99-dock-trigger.rules"), "udev dock rule installed")
+        # Every row above is a file-presence check, and all of them pass on a
+        # machine that has never seen a dock. TESTING.md has said so since the
+        # section was written; the verification pass itself did not, and four
+        # green rows read as a working feature unless something says otherwise.
+        add("Dock trigger observed firing", "warn",
+            "never — the rows above confirm files on disk, not that a dock event runs "
+            "them. Future feature, designed for the CF-30 and DS-PAN-111 and not yet "
+            "exercised against either; see 'Verifying it actually fires' in TESTING.md.")
 
     # --- optional installs ----------------------------------------------
     if "direwolf" in selected_ids:
