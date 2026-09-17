@@ -1088,6 +1088,19 @@ Disable it for any node where broadcasting a location is inappropriate
     meshtastic --info
     meshtastic --nodes
 
+## WARNING: `meshtastic --info` prints your private key
+
+Its output includes `security.privateKey` in plaintext, along with the
+node's position and every peer it has heard. It is a useful liveness check
+and a fine thing to read; it is not a thing to paste into a bug report, an
+issue, a forum post or a screenshot. If it has already gone somewhere
+public, regenerate the node's keypair.
+
+To share evidence of a problem, send the specific lines that matter, or
+the service journal:
+
+    journalctl --user -u emcomm-mesh-gpx -n 50
+
 ## 5. Backup / restore config
 
 Back up a known-good node and clone it to the rest of the fleet:
@@ -1214,12 +1227,44 @@ VERIFIED on a Seeed Wio Tracker L1 Pro against a provisioned node: the
 board enumerates as native CDC-ACM, no service claims the port, and
 `meshtastic --info` connects first try.
 
+VERIFIED 2026-09-17 against a live mesh -- a Wio Tracker L1 Pro on a
+9-node mesh, peers 0 to 7 hops out. Four of nine nodes had positions and
+exactly those four reached the GPX. Three matched `meshtastic --info` to
+seven decimal places on position, altitude and last-heard time; the fourth
+was the local node, whose GPS had refreshed in the 71 seconds between the
+two commands. `meshtastic --info` connected normally while the service was
+running, so the bridge does not hold the port.
+
+The import was exercised on QMapShack 1.17.1: the project loads and every
+positioned peer appears by short name. Load it with
+
+    qmapshack "$HOME/EMCOMM_Data/Meshtastic/mesh_nodes.gpx"
+
+or drag the file onto the workspace -- the menus move between versions,
+those two do not.
+
+QMapShack does NOT notice the file changing on disk -- tested, not
+assumed. With a waypoint moved half a degree and the file swapped in by
+rename, the same way the bridge writes it, the open project did not
+redraw. An import is a snapshot. Every load also creates a NEW project
+rather than updating one, so a refreshed map means deleting the stale
+project and importing again.
+
+An empty-looking map is not a failed import. QMapShack logs "Empty
+filename passed to function", repeatedly and on every pan, when its
+registered map sources point at tile directories that hold nothing -- the
+state of a node whose map step has not run, or one operating outside the
+fetched area. The waypoints are still there.
+
+A NOTE ON PRECISION. A peer's position may be a mesh broadcast rather than
+a GPS reading, and broadcasts are quantized by the channel's
+positionPrecision. On the mesh above, at precision 13, two nodes two
+kilometres apart reported identical coordinates to seven decimal places.
+Treat a peer waypoint as "roughly here", not as a survey point -- the
+node's own position is the only one that arrives at full precision.
+
 UNVERIFIED: that gpsd ignores $GPWPL and that QMapShack cannot read gpsd
-are read from their documentation, not observed. So is the claim that
-QMapShack will not notice the GPX changing on disk -- if it does, the
-bridge is better than advertised. The bridge itself has been exercised
-against recorded node data, not against a live mesh: no radio has yet
-driven it end to end.
+are read from their documentation, not observed.
 
 ## Operating note: this is an open net
 
