@@ -99,6 +99,14 @@ Installed and configured by the provisioner:
 * **ADS-B aircraft tracking:** dump1090 (via RTL-SDR) — installed but **not**
   started automatically; see the note below
 * **Automation:** desktop shortcuts
+* **Mesh-to-GPX bridge:** when **both** Meshtastic and QMapShack are installed, a
+  user service (`emcomm-mesh-gpx.service`) polls the Meshtastic node database and
+  rewrites `EMCOMM_Data/Meshtastic/mesh_nodes.gpx` for import into QMapShack.
+  Skipped, with a message, on a node without QMapShack. It never holds the serial
+  port — each poll opens, reads and closes, and skips a cycle if something else
+  has the radio — so it cannot block an interactive `meshtastic` command. Peer
+  positions reach the map as a **file, not a live feed**: QMapShack is not believed
+  to re-read a GPX that changes on disk, so a refreshed map means importing again
 * **Dock-triggered autostart (udev + systemd):** optional, installed by the
   provisioner, and **not a finished feature** — see **Supported Hardware** above
 

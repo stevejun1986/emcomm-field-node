@@ -36,7 +36,7 @@ before an hour of package installation.
 | 6 | System packages + Wine init | Slowest step. Confirm no interactive prompt stalls it |
 | 7 | QLog station log + ion2G HF ALE | Checksum must verify; re-run to confirm it is idempotent |
 | 8 | Offline knowledgebase | Large download; the pinned URL will eventually rotate |
-| 9 | Direwolf / Meshtastic | Needs hardware to validate beyond "it installed" |
+| 9 | Direwolf / Meshtastic | Needs hardware to validate beyond "it installed". The Meshtastic step also installs the **mesh-to-GPX bridge** (`emcomm-mesh-gpx.service`) when QMapShack is on PATH — skipped with a message otherwise, since QMapShack is the only consumer. Enabled, not started: it comes up at the next login, the same one that makes `dialout` take effect. See *Mesh-to-GPX bridge: what has and has not been tested* below |
 | 10 | dump1090 (ADS-B) | Preseeded install, so no debconf prompt should stall it. **Three separate things must hold, and the first alone is not enough**: not enabled at boot (`systemctl is-enabled` → disabled) and not in the autostart sequence, since it and SatDump cannot share the dongle; startable on demand (`grep START_DUMP1090 /etc/default/dump1090-mutability` → `"yes"`, the switch the init script tests on every start); and able to open the dongle (`id dump1090` lists `plugdev`, since the device node is `root:plugdev 0660`). With a dongle attached, `sudo service dump1090-mutability start` should populate `/run/dump1090-mutability/aircraft.json` within a second or two — an empty directory means it started and died. The lighttpd map arrives on the distribution default, not loopback: `ss -ltnp | grep lighttpd` |
 | 10b | RTL-SDR dongle arbitration | Only meaningful with a dongle attached **and both** dump1090 and SatDump installed. The run should print a `BOTH … are installed` warning naming `EMCOMM_Data/SDR/dongle_arbitration.md`, and the verification should show **RTL-SDR dongle reference staged**. Confirm the contention is real: start dump1090, then `rtl_test -t` should fail; stop it (`service stop` **and** `pkill -x dump1090-mutability` — the first misses a hand-launched copy) and `rtl_test -t` should succeed. Also confirm the kernel is out of the way: `/etc/modprobe.d/emcomm-rtlsdr.conf` should exist and `lsmod \| grep -i rtl28xxu` should be empty. Unplug and replug the dongle — the driver must not come back. If `rtl_test` fails with nothing running at all, that blacklist is the first thing to check. Distinguish that from `rtl_test: command not found`, which is the `rtl-sdr` package being absent rather than any contention — verification's **rtl_test available** row reports it, and either SDR step now installs it |
 | 11 | SatDump | Always a source build; the longest step. Confirm `satdump` reaches `PATH` after `make install`. Toolchain and libraries install as two apt transactions, so a bad library name cannot cost the compiler; each resolves to its own cross and cmake's output reaches the run log. Retrying after a failed configure is safe — the stale `CMakeCache.txt` is discarded, since cmake would otherwise reuse its NOTFOUND results. The TLE row is only checked when a binary exists — TLE staging runs after the build, so with no binary its absence is a consequence, not a second fault. TLE handling then depends on whether `configs/satdump_tles.txt` exists: with no curated set (the default, since `configs/` ships empty) SatDump's own fetch is left enabled and first launch loads its full default set; with one, it is staged and the fetch is switched off so it cannot overwrite it. The log says which arrangement was applied. Then open SatDump and confirm the Tracking tab lists satellites — `0 TLEs loaded!` means neither happened, and the node cannot predict a pass |
@@ -59,6 +59,55 @@ grep -nE "PLACEHOLDER|/home/" ~/.config/QLandkarteGT/QMapShack.conf
 `MyCall` must be the callsign you entered. `MyGrid` should be empty. No
 `PLACEHOLDER` token should remain anywhere — a literal token that survives is
 used as a real value, which is worse than a missing setting.
+
+## Mesh-to-GPX bridge: what has and has not been tested
+
+Installed by the Meshtastic step **only when QMapShack is also on PATH**. On a node
+without QMapShack it is skipped and the run says so — that is correct behavior, not
+a failure, and verification reports it as a single explanatory warning rather than a
+missing file.
+
+**No radio has ever driven this.** Everything below has been exercised against
+recorded node data: the GPX rendering, the conditional install, and the failure
+paths. A live mesh has not been in the loop.
+
+What to confirm on hardware, in order:
+
+```bash
+systemctl --user is-enabled emcomm-mesh-gpx.service   # should say: enabled
+```
+
+It is deliberately **not started** during provisioning. The same step may have just
+added you to `dialout`, which does not take effect until the next login, so a
+service started now would fail every poll on a permission error. It comes up at
+that login.
+
+After a re-login, with a node attached:
+
+```bash
+emcomm-mesh-gpx --once --dump          # force one poll, print the GPX
+ls -l ~/EMCOMM_Data/Meshtastic/mesh_nodes.gpx
+journalctl --user -u emcomm-mesh-gpx -n 20
+```
+
+Peers appear only once they have **sent** a position. A peer with
+`position.gps_enabled` off is known to the mesh and absent from the GPX — that is
+the mesh's state, not a defect in the bridge, and the poll says so in the log.
+
+Three things are worth settling that the bench could not:
+
+1. **Does it fight you for the radio?** It should not: each poll opens the port,
+   reads, and closes it, and skips a cycle if something else has it. With the
+   service running, `meshtastic --info` should still work. **If that command fails
+   only while the service is running, the port release is not working as designed**
+   — capture `journalctl --user -u emcomm-mesh-gpx` and treat it as a defect.
+2. **Does QMapShack notice the file changing?** Assumed no — an import is a
+   snapshot, so a refreshed map means importing again. If it does pick up changes
+   on its own, the bridge is better than documented, and this section plus the
+   staged reference should both be corrected.
+3. **Do the waypoints land where you expect?** `<metadata><time>` is the poll time;
+   each `<wpt><time>` is that peer's last-heard time, so a stale peer keeps its old
+   position and says how old it is rather than disappearing.
 
 ## Dock trigger: verifying it actually fires
 

@@ -168,6 +168,13 @@ APPS_DIR_NAME = OPERATOR_PREFIX + "_Apps"
 NODE_CONF        = SYSTEM_DIR + "/node.conf"
 SUDOERS_FILE     = "/etc/sudoers.d/" + UNIT_PREFIX + "-automation"
 AUTOSTART_UNIT   = UNIT_PREFIX + "-autostart.service"
+
+#: Mesh -> GPX bridge. 120s is a compromise: each poll opens the serial port
+#: for a few seconds, so a faster cadence leaves the radio busy a larger
+#: fraction of the time, and mesh positions do not change fast enough to
+#: justify it.
+MESH_GPX_UNIT_NAME = UNIT_PREFIX + "-mesh-gpx.service"
+MESH_GPX_INTERVAL  = 120
 DOCS_SERVER_UNIT = UNIT_PREFIX + "-docs-server.service"
 AUTOSTART_SCRIPT = UNIT_PREFIX + "-autostart-sequence.sh"
 DOCK_EVENT_SH    = "/usr/local/bin/" + UNIT_PREFIX + "-dock-event.sh"
@@ -1179,7 +1186,22 @@ the Serial Module that puts data on the USB port.
 
 If you want mesh peer positions on the map, the path that actually
 works is a file, not a live feed: read the node list and convert it to
-GPX, which QMapShack imports directly.
+GPX, which QMapShack imports directly. The provisioner installs that
+bridge when QMapShack is also present -- a user service that polls the
+node database and rewrites
+
+    ~/EMCOMM_Data/Meshtastic/mesh_nodes.gpx
+
+Import that file into a QMapShack project. It is refreshed on a timer;
+QMapShack is not believed to re-read a file that changes underneath it,
+so a refreshed map means importing again. Each waypoint carries its own
+last-heard time, so a peer that has gone quiet keeps its last known
+position and says how old it is rather than vanishing.
+
+The bridge never holds the serial port: it opens, reads, closes, and
+skips a cycle if something else has the radio. Run
+`emcomm-mesh-gpx --once --dump` to see what it would write, or read the
+raw list yourself with
 
     meshtastic --nodes
 
@@ -1193,8 +1215,11 @@ board enumerates as native CDC-ACM, no service claims the port, and
 `meshtastic --info` connects first try.
 
 UNVERIFIED: that gpsd ignores $GPWPL and that QMapShack cannot read gpsd
-are read from their documentation, not observed. The $GPWPL-to-GPX
-conversion is not written; nothing in this repository does it for you.
+are read from their documentation, not observed. So is the claim that
+QMapShack will not notice the GPX changing on disk -- if it does, the
+bridge is better than advertised. The bridge itself has been exercised
+against recorded node data, not against a live mesh: no radio has yet
+driven it end to end.
 
 ## Operating note: this is an open net
 
@@ -1824,6 +1849,353 @@ KISSPORT 8001
         ctx.log("[!] Direwolf install failed — check log above.", "err")
 
 
+#: The mesh -> GPX bridge, written to the node by the Meshtastic step when
+#: QMapShack is also installed. Embedded rather than shipped as a repo file
+#: because the released artifact is a tarball of this tree and the script has
+#: to land on the node whatever the operator cloned.
+MESH_TO_GPX_PY = r'''#!/usr/bin/env python3
+"""Meshtastic mesh peer positions -> GPX, for import into QMapShack.
+
+Staged by the EMCOMM provisioner. Runs as a systemd --user service
+(emcomm-mesh-gpx.service) and can also be run by hand:
+
+    emcomm-mesh-gpx --once            one poll, write the file, exit
+    emcomm-mesh-gpx --loop            poll forever (what the service runs)
+    emcomm-mesh-gpx --once --dump     print the GPX instead of writing it
+
+WHY A FILE AND NOT A LIVE FEED
+
+The Serial Module's NMEA output cannot carry peer positions to a host:
+gpsd's client protocol reports TPV and SKY objects only, so $GPWPL
+waypoint sentences have no object to arrive in, and QMapShack's realtime
+sources are OpenSky, AIS and GPS over TCP NMEA -- not gpsd. A file is the
+path that works. See the Meshtastic setup reference for the whole argument.
+
+WHAT THIS DOES NOT DO
+
+It does not make QMapShack track the mesh live. QMapShack imports a GPX
+into a project as a snapshot; it is not believed to re-read a file that
+changes underneath it. This daemon keeps the file current so a re-import
+is cheap -- it does not animate the map. That belief is UNVERIFIED: if
+QMapShack does pick up changes on its own, this daemon is better than
+advertised, not worse.
+
+THE SERIAL PORT IS NOT HELD
+
+Each poll opens the port, reads the node database, and closes it again,
+even on failure. A daemon that held the port would block every
+`meshtastic` command the operator typed, and the CLI would report a
+broken radio rather than a busy one. If the port is busy or absent, the
+poll is skipped with a warning and the previous file is left alone.
+"""
+import argparse
+import os
+import sys
+import time
+import xml.sax.saxutils as su
+from datetime import datetime, timezone
+from pathlib import Path
+
+DEFAULT_INTERVAL = 120
+GPX_NS = "http://www.topografix.com/GPX/1/1"
+
+
+def _log(msg: str) -> None:
+    """One line to stderr, which systemd routes to the journal.
+
+    Unit name is the journal tag, so `journalctl --user -u emcomm-mesh-gpx`
+    finds these. Nothing calls logger(1), which without -t would tag them
+    with the invoking user instead of anything searchable.
+    """
+    print(msg, file=sys.stderr, flush=True)
+
+
+def _iso(ts) -> str:
+    """Epoch seconds -> RFC3339 UTC, the only time format GPX accepts."""
+    return datetime.fromtimestamp(int(ts), tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def node_position(node: dict):
+    """(lat, lon, alt) for a node, or None when it has no usable fix.
+
+    Meshtastic stores position as latitudeI/longitudeI in units of 1e-7
+    degrees and the client library derives the float form from them, so a
+    node that has never reported a position has no 'latitude' key at all
+    -- and one whose fix was cleared reports exactly 0/0. The library
+    itself treats 0/0 as unset (`if position.latitude_i != 0 and ...`),
+    so this does too. A node sitting on Null Island is indistinguishable
+    from one with no fix, which is the library's convention, not a
+    judgement about the Gulf of Guinea.
+    """
+    pos = node.get("position") or {}
+    lat = pos.get("latitude")
+    lon = pos.get("longitude")
+    if lat is None or lon is None:
+        return None
+    if lat == 0 and lon == 0:
+        return None
+    return float(lat), float(lon), pos.get("altitude")
+
+
+def nodes_to_gpx(nodes: dict, generated=None) -> tuple:
+    """Render the node database as GPX 1.1. Returns (xml, positioned, total).
+
+    Pure: no hardware, no clock beyond `generated`, no I/O. Everything
+    interesting about this script is testable through this function.
+    """
+    generated = generated or datetime.now(timezone.utc)
+    nodes = nodes or {}
+    out = [
+        '<?xml version="1.0" encoding="UTF-8"?>',
+        '<gpx version="1.1" creator="emcomm-mesh-gpx" xmlns="%s">' % GPX_NS,
+        "  <metadata>",
+        "    <name>Meshtastic mesh peers</name>",
+        "    <desc>Peer positions as of the last poll. Each waypoint carries its "
+        "own last-heard time: a stale peer keeps its old position until it is "
+        "heard from again.</desc>",
+        "    <time>%s</time>" % generated.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "  </metadata>",
+    ]
+    positioned = 0
+    for node_id in sorted(nodes):
+        node = nodes[node_id] or {}
+        fix = node_position(node)
+        if fix is None:
+            continue
+        positioned += 1
+        lat, lon, alt = fix
+        user = node.get("user") or {}
+        name = user.get("shortName") or user.get("longName") or node_id
+        long_name = user.get("longName") or ""
+
+        detail = []
+        if long_name and long_name != name:
+            detail.append(long_name)
+        detail.append("id %s" % node_id)
+        if user.get("hwModel"):
+            detail.append("hw %s" % user["hwModel"])
+        if node.get("hopsAway") is not None:
+            detail.append("%s hop(s)" % node["hopsAway"])
+        if node.get("snr") is not None:
+            detail.append("snr %s" % node["snr"])
+        battery = (node.get("deviceMetrics") or {}).get("batteryLevel")
+        if battery is not None:
+            detail.append("battery %s%%" % battery)
+        if node.get("lastHeard"):
+            detail.append("heard %s" % _iso(node["lastHeard"]))
+
+        out.append('  <wpt lat="%.7f" lon="%.7f">' % (lat, lon))
+        if alt is not None:
+            out.append("    <ele>%.1f</ele>" % float(alt))
+        if node.get("lastHeard"):
+            out.append("    <time>%s</time>" % _iso(node["lastHeard"]))
+        out.append("    <name>%s</name>" % su.escape(str(name)))
+        out.append("    <desc>%s</desc>" % su.escape(" | ".join(detail)))
+        out.append("  </wpt>")
+    out.append("</gpx>")
+    return "\n".join(out) + "\n", positioned, len(nodes)
+
+
+def write_atomic(path: Path, text: str) -> None:
+    """Write via a temp file in the same directory, then rename.
+
+    QMapShack may be reading the file at any moment. A partial GPX is not
+    a smaller GPX, it is an XML parse error, so the reader must never see
+    one: os.replace is atomic within a filesystem.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(text, encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def poll_once(port=None, timeout=30):
+    """Connect, read the node database, disconnect. None if unreachable.
+
+    The import is deferred to here so --help and the GPX rendering work
+    without the meshtastic package present, which is what makes this
+    file testable off a provisioned node.
+    """
+    try:
+        from meshtastic.serial_interface import SerialInterface
+    except ImportError:
+        _log("[!] the 'meshtastic' package is not importable — this script must run "
+             "under the provisioner's meshtastic venv interpreter.")
+        return None
+
+    iface = None
+    try:
+        iface = SerialInterface(devPath=port, timeout=timeout)
+        return dict(iface.nodes or {})
+    except Exception as exc:  # noqa: BLE001 — any failure means skip this poll
+        _log("[!] poll skipped: could not read the node database (%s: %s). The port "
+             "may be in use by an interactive meshtastic command, or no node is "
+             "attached. The previous GPX is left as it was."
+             % (type(exc).__name__, exc))
+        return None
+    finally:
+        # Releasing the port matters more than a clean shutdown: an
+        # unclosed interface holds /dev/ttyACM* until this process exits,
+        # which is exactly the contention this daemon must not create.
+        if iface is not None:
+            try:
+                iface.close()
+            except Exception as exc:  # noqa: BLE001
+                _log("[!] error closing the serial interface (%s) — the port may stay "
+                     "held until this process exits." % type(exc).__name__)
+
+
+def run_once(output: Path, port=None, dump=False) -> bool:
+    nodes = poll_once(port)
+    if nodes is None:
+        return False
+    xml, positioned, total = nodes_to_gpx(nodes)
+    if dump:
+        sys.stdout.write(xml)
+    else:
+        write_atomic(output, xml)
+    if total == 0:
+        _log("[!] the node database is empty — nothing has been heard yet. Wrote a "
+             "GPX with no waypoints.")
+    elif positioned == 0:
+        _log("[!] %d node(s) known, none reporting a position — wrote a GPX with no "
+             "waypoints. Peers only appear here once they send position, which "
+             "requires position.gps_enabled on their node." % total)
+    else:
+        _log("[+] wrote %d of %d node(s) with positions to %s" % (positioned, total, output))
+    return True
+
+
+def main(argv=None) -> int:
+    ap = argparse.ArgumentParser(
+        description="Meshtastic mesh peer positions -> GPX for QMapShack.")
+    mode = ap.add_mutually_exclusive_group()
+    mode.add_argument("--once", action="store_true", help="one poll, then exit")
+    mode.add_argument("--loop", action="store_true", help="poll until stopped")
+    ap.add_argument("--output", type=Path,
+                    default=Path.home() / "EMCOMM_Data" / "Meshtastic" / "mesh_nodes.gpx")
+    ap.add_argument("--interval", type=int, default=DEFAULT_INTERVAL,
+                    help="seconds between polls in --loop (default %d)" % DEFAULT_INTERVAL)
+    ap.add_argument("--port", default=None, help="serial device (default: autodetect)")
+    ap.add_argument("--dump", action="store_true",
+                    help="with --once, print the GPX instead of writing it")
+    args = ap.parse_args(argv)
+
+    if args.interval < 30:
+        # Each poll opens the port for several seconds. Polling faster than
+        # that leaves the radio busy more often than not, which is the
+        # contention this daemon exists to avoid creating.
+        _log("[!] --interval %d is below the 30s floor; using 30." % args.interval)
+        args.interval = 30
+
+    if not args.loop:
+        return 0 if run_once(args.output, args.port, args.dump) else 1
+
+    _log("[*] polling every %ds -> %s" % (args.interval, args.output))
+    while True:
+        run_once(args.output, args.port)
+        time.sleep(args.interval)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+'''
+
+
+#: Long-running user service. Not a timer: one unit owns the loop, so
+#: `systemctl --user status` shows a single thing either running or not.
+#: Restart=always covers the process dying; the poll loop already survives a
+#: failed poll, so a restart means something worse than a busy port, and
+#: RestartSec is generous for the same reason -- a node that is simply absent
+#: should not produce a restart storm in the journal.
+MESH_GPX_UNIT = """[Unit]
+Description=EMCOMM Meshtastic to GPX bridge for QMapShack
+Documentation=file:%(home)s/EMCOMM_Data/Meshtastic/meshtastic_setup.md
+After=default.target
+
+[Service]
+Type=simple
+ExecStart=%(python)s %(script)s --loop --interval %(interval)d --output %(output)s
+Restart=always
+RestartSec=30
+
+[Install]
+WantedBy=default.target
+"""
+
+
+def _install_mesh_gpx_bridge(ctx: Ctx, meshtastic_venv: Path) -> bool:
+    """Mesh -> GPX bridge, installed only when QMapShack is also present.
+
+    Conditional because the bridge has exactly one consumer. On a node with
+    no QMapShack there is nothing to import the file, so installing a service
+    to write it would be a daemon polling a radio on a timer for no reader --
+    cost with no benefit, and a serial port touched for nothing.
+
+    The false branch is not silent, per rule 1: a positive-form guard whose
+    else is silence is how a step comes to report success having installed
+    half of what its name implies.
+    """
+    qmapshack = shutil.which("qmapshack")
+    if not qmapshack:
+        ctx.log("[!] QMapShack not found on PATH — the mesh-to-GPX bridge was NOT "
+                "installed. It exists only to feed QMapShack, so there is nothing "
+                "here for it to feed.", "warn")
+        ctx.log("    QMapShack arrives with the system-packages step. Install it, "
+                "re-run this step, and the bridge lands then.", "warn")
+        return False
+
+    script = ctx.home / APPS_DIR_NAME / "mesh_to_gpx.py"
+    script.parent.mkdir(parents=True, exist_ok=True)
+    script.write_text(MESH_TO_GPX_PY)
+    script.chmod(0o755)
+
+    output = ctx.data_dir / "Meshtastic" / "mesh_nodes.gpx"
+    output.parent.mkdir(parents=True, exist_ok=True)
+
+    # On PATH so the operator can force a poll by hand -- the first thing to
+    # do when the map looks wrong -- using the venv interpreter rather than
+    # the system one, which has no meshtastic package.
+    local_bin = ctx.home / ".local" / "bin"
+    local_bin.mkdir(parents=True, exist_ok=True)
+    wrapper = local_bin / "emcomm-mesh-gpx"
+    wrapper.write_text('#!/bin/bash\nexec "%s/bin/python" "%s" "$@"\n'
+                       % (meshtastic_venv, script))
+    wrapper.chmod(0o755)
+
+    systemd_user = ctx.home / ".config" / "systemd" / "user"
+    systemd_user.mkdir(parents=True, exist_ok=True)
+    (systemd_user / MESH_GPX_UNIT_NAME).write_text(MESH_GPX_UNIT % {
+        "home": ctx.home,
+        "python": meshtastic_venv / "bin" / "python",
+        "script": script,
+        "interval": MESH_GPX_INTERVAL,
+        "output": output,
+    })
+    ctx.run(["systemctl", "--user", "daemon-reload"], check=False)
+    enabled = ctx.run(["systemctl", "--user", "enable", MESH_GPX_UNIT_NAME],
+                      check=False).returncode == 0
+
+    ctx.log(f"[+] Mesh-to-GPX bridge installed — {script}", "ok")
+    ctx.log(f"[+] Writes {output} every {MESH_GPX_INTERVAL}s; import it into a "
+            f"QMapShack project.", "ok")
+    if enabled:
+        # Enabled but deliberately NOT started. The same step may have just
+        # added this user to 'dialout', which does not take effect until they
+        # log in again -- a service started now would fail every poll on a
+        # permission error until then and fill the journal with it. Enabling
+        # means it comes up at the moment the group membership does.
+        ctx.log("[!] The bridge starts at your NEXT LOGIN, not now — the same login "
+                "that makes 'dialout' take effect. To start it sooner, log out and "
+                "back in, then: systemctl --user start " + MESH_GPX_UNIT_NAME, "warn")
+    else:
+        ctx.log("[!] Could not enable " + MESH_GPX_UNIT_NAME + " — the bridge is on "
+                "disk but will not start on its own. Enable it by hand: "
+                "systemctl --user enable --now " + MESH_GPX_UNIT_NAME, "err")
+    ctx.log("    A poll on demand, without the service: emcomm-mesh-gpx --once", "info")
+    return True
+
+
 def optional_meshtastic(ctx: Ctx):
     # Noble enforces PEP 668 (externally-managed environment), so a bare
     # 'pip install' is refused. Use an isolated venv rather than
@@ -1873,6 +2245,8 @@ def optional_meshtastic(ctx: Ctx):
     (meshtastic_dir / "meshtastic_setup.md").write_text(MESHTASTIC_SETUP_MD)
     ctx.log(f"[+] Meshtastic setup reference staged to {meshtastic_dir}/", "ok")
     ctx.log("[!] Meshtastic node config is NOT applied automatically — see the staged reference.", "warn")
+
+    _install_mesh_gpx_bridge(ctx, meshtastic_venv)
 
 
 def _build_jobs() -> int:
@@ -2858,6 +3232,37 @@ def verify_deployment(ctx: Ctx, selected_ids: set) -> list:
             else "added, but requires log out / log in to take effect")
         want(ctx.data_dir / "Meshtastic" / "meshtastic_setup.md",
              "Mesh setup reference staged", hard=False)
+
+        # The bridge is conditional on QMapShack, so its absence is a finding
+        # only when QMapShack is there. Reporting a missing file on a node
+        # that was never meant to have one is how a verification pass trains
+        # an operator to skim past it.
+        bridge = home / APPS_DIR_NAME / "mesh_to_gpx.py"
+        if not shutil.which("qmapshack"):
+            add("Mesh-to-GPX bridge", "warn",
+                "not installed — QMapShack is not on PATH, and the bridge exists only "
+                "to feed it. Not a defect on a node without QMapShack.")
+        elif want(bridge, "Mesh-to-GPX bridge installed"):
+            want(home / ".local" / "bin" / "emcomm-mesh-gpx",
+                 "emcomm-mesh-gpx wrapper on PATH")
+            unit = home / ".config" / "systemd" / "user" / MESH_GPX_UNIT_NAME
+            if want(unit, "Mesh-to-GPX user unit installed"):
+                # A unit file on disk is not an enabled unit, and this one is
+                # deliberately enabled-but-not-started during provisioning, so
+                # "enabled" is the strongest true claim available here.
+                # Checking for "active" would fail on every correct install.
+                enabled = subprocess.run(
+                    ["systemctl", "--user", "is-enabled", MESH_GPX_UNIT_NAME],
+                    stdin=subprocess.DEVNULL, capture_output=True,
+                    text=True).stdout.strip()
+                add("Mesh-to-GPX service enabled",
+                    "pass" if enabled == "enabled" else "warn",
+                    "%s — starts at next login; it is not started during provisioning "
+                    "because 'dialout' does not take effect until then"
+                    % (enabled or "unknown"))
+            # The GPX itself is NOT checked: it cannot exist until the service
+            # has run against a real node, and a row that fails on every fresh
+            # install is a row nobody reads.
 
     if "dump1090" in selected_ids:
         d1090 = shutil.which("dump1090-mutability")
