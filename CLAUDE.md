@@ -262,6 +262,42 @@ forever.
 Build the tarball from the tagged commit, not from a working tree. Signing
 attests to bytes; bytes that no tag points at cannot be checked by anyone else.
 
+### Check the archive against the tag before signing it
+
+**This is a step, not advice.** Run it between building the tarball and signing
+it, every time:
+
+```bash
+TAG=v1.0.2                       # the tag being released
+ARCHIVE=emcomm-field-node-${TAG#v}.tar.gz
+
+git archive --format=tar.gz --prefix="emcomm-field-node-${TAG#v}/" "$TAG" > "$ARCHIVE"
+
+# What the archive actually says about itself.
+BUILT=$(tar -xzOf "$ARCHIVE" --wildcards '*/deploy_emcomm_node_gui.py' \
+        | sed -n 's/^VERSION = "\(.*\)"/\1/p')
+
+[ "$BUILT" = "${TAG#v}" ] \
+  && echo "OK: archive reports $BUILT, tag is $TAG" \
+  || { echo "STOP: archive reports '$BUILT', tag is '$TAG'"; false; }
+```
+
+Sign only if that prints OK. If it does not, the tag is on the wrong commit —
+fix the tag, rebuild, re-check. Do not sign and fix afterwards: a signature over
+the wrong bytes has to be withdrawn, and anyone who fetched it in the meantime
+has no way to know.
+
+Why it is written down rather than trusted to care: **a tag has pointed at a
+tree carrying the wrong version twice here.** Once when `v1.0.0` was moved back
+onto `17059d3`, undoing a retag that had already fixed it, and once when
+`v1.0.1` first landed on `b8dca1a`, one commit before the bump. Both were
+recoverable, and both cost a re-tag and a re-signed asset.
+
+The ordering rule above did not prevent either, and cannot: it governs the
+commit, and the fault appears in the artifact. This check reads the artifact,
+which is the only place the fault is visible. It is three lines and it is the
+last moment the mistake is still cheap.
+
 ---
 
 ## Relationship to the S.T.N.D. repository
