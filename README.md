@@ -226,58 +226,32 @@ and all four are wrong on someone else's machine.
 
 ## Verifying a release download
 
-Release tarballs are signed with an SSH key. Verifying takes two minutes and confirms
-the archive is the one built from the tag, unaltered in transit or on the release page.
+Releases are signed with this SSH key:
 
-Each release carries three files: the tarball, its `.sig`, and `SHA256SUMS`.
-
-**1. Check the digest**
-
-```bash
-sha256sum -c SHA256SUMS
+```text
+ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIIgY7UVCUi3z4Un9Dxl83TF1iCjZSODEvNdetP7Omc1Z
 ```
 
-**2. Verify the signature**
-
-Write an `allowed_signers` file containing the signing key. The name on the left is a
-label, not an address — it only has to match the `-I` argument below:
+Put that in a file called `allowed_signers`, prefixed with a label:
 
 ```text
 release@emcomm-field-node ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIIgY7UVCUi3z4Un9Dxl83TF1iCjZSODEvNdetP7Omc1Z
 ```
 
-Then, with the tarball, the `.sig` and that file in the same directory:
+Then, alongside the downloaded tarball, its `.sig` and `SHA256SUMS`:
 
 ```bash
+sha256sum -c SHA256SUMS
 ssh-keygen -Y verify -f allowed_signers -I release@emcomm-field-node \
     -n file -s emcomm-field-node-<version>.tar.gz.sig \
     < emcomm-field-node-<version>.tar.gz
 ```
 
-A good signature prints:
+Both should pass; the second prints `Good "file" signature`. **If either fails, do not
+run the provisioner** — report it on the issue tracker.
 
-```text
-Good "file" signature for release@emcomm-field-node with ED25519 key SHA256:Ut/j+m5SlkA1xGBz4wLK9S+9FKXON2Yoj9NYyanTgmw
-```
-
-A modified archive prints `Signature verification failed: incorrect signature`. A
-mismatched `-n` prints `namespace does not match` — the namespace is `file`, and it
-must be given exactly.
-
-### The signing key
-
-```text
-ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIIgY7UVCUi3z4Un9Dxl83TF1iCjZSODEvNdetP7Omc1Z
-SHA256:Ut/j+m5SlkA1xGBz4wLK9S+9FKXON2Yoj9NYyanTgmw
-```
-
-The fingerprint on the second line is **not** sufficient to verify anything on its own —
-`ssh-keygen -Y verify` needs the full public key above. The fingerprint is for confirming
-that a key you obtained elsewhere is this one.
-
-**If verification fails, do not run the provisioner.** Report it on the issue tracker.
-
----
+Key fingerprint, for checking a copy you got elsewhere:
+`SHA256:Ut/j+m5SlkA1xGBz4wLK9S+9FKXON2Yoj9NYyanTgmw`
 
 ## Requirements
 
