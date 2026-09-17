@@ -1272,6 +1272,12 @@ def step_system_packages(ctx: Ctx):
     # rtl_test and friends live in this separate package. The staged ADS-B
     # reference tells the operator to run `rtl_test -t` to prove the dongle
     # contention, which was "command not found" on every node built here.
+    #
+    # Also installed by each SDR step via _ensure_rtl_sdr_tools(), because this
+    # step is independently selectable and a node that took SatDump and dump1090
+    # without it had no rtl_test at all. Kept here as well so a node running
+    # neither SDR step still gets the tools with the rest of the base system;
+    # apt is idempotent, so the overlap costs nothing.
     packages = [
         "git", "curl", "wget", "build-essential",
         "gpsd", "gpsd-clients", "chrony", "tmux",
@@ -1968,6 +1974,35 @@ def _blacklist_dvb_driver(ctx: Ctx):
                     "coming back.", "warn")
 
 
+def _ensure_rtl_sdr_tools(ctx: Ctx):
+    """Install the rtl-sdr command-line tools for whichever SDR step ran.
+
+    Both SDR steps already pull the *library*: SatDump builds against
+    librtlsdr-dev, and dump1090-mutability depends on librtlsdr2, which is
+    also what brings the udev rules. Neither brings rtl_test, rtl_eeprom and
+    friends -- those ship in the separate `rtl-sdr` package.
+
+    That package was listed only in the system-packages step, which is
+    independently selectable, so a node built with SatDump and dump1090 but
+    without it had no rtl_test. The staged references and the checklist both
+    tell the operator to run `rtl_test -t` to prove which process holds the
+    dongle, and it is how the DVB-T blacklist is checked -- so the tool that
+    proves the arbitration works was missing on exactly the nodes doing SDR.
+
+    Declared here, at the two points of use, rather than left to a step the
+    operator has to know to tick. apt is idempotent, so a node that also ran
+    system packages pays nothing.
+    """
+    rc = ctx.sudo("apt", "install", "-y", "rtl-sdr", check=False).returncode
+    if rc == 0:
+        ctx.log("[+] rtl-sdr command-line tools installed (rtl_test, rtl_eeprom).", "ok")
+    else:
+        ctx.log(f"[!] rtl-sdr tools install exited {rc} — `rtl_test -t` will not be "
+                f"available, and it is what the staged SDR references tell you to run "
+                f"to prove the dongle is free. Install it by hand: "
+                f"sudo apt install rtl-sdr", "warn")
+
+
 def _stage_dongle_reference(ctx: Ctx):
     """Stage the shared-dongle reference, and warn when both claimants exist.
 
@@ -2108,6 +2143,7 @@ def optional_dump1090(ctx: Ctx):
     adsb_dir.mkdir(parents=True, exist_ok=True)
     (adsb_dir / "dump1090_setup.md").write_text(DUMP1090_SETUP_MD)
     ctx.log(f"[+] ADS-B setup reference staged to {adsb_dir}/", "ok")
+    _ensure_rtl_sdr_tools(ctx)
     _blacklist_dvb_driver(ctx)
     _stage_dongle_reference(ctx)
     ctx.log("[!] Receiver latitude/longitude are NOT set — that is operator position "
@@ -2297,6 +2333,7 @@ def optional_satdump(ctx: Ctx):
     # Usable either way: the build succeeded, so the user-level TLE config
     # below is worth writing and a build-tree binary will read it.
     ctx.satdump_installed = True
+    _ensure_rtl_sdr_tools(ctx)
     _blacklist_dvb_driver(ctx)
     _stage_dongle_reference(ctx)
     # But only a successful install put anything under /usr, and the desktop
@@ -2876,6 +2913,15 @@ def verify_deployment(ctx: Ctx, selected_ids: set) -> list:
         # Hard: without it the kernel can take the dongle at plug-in and every
         # SDR program on the node fails to open a device that is plainly there.
         want(Path(DVB_BLACKLIST_FILE), "Kernel DVB-T driver blacklisted")
+        # On PATH, not "the package is installed". A node built with SatDump and
+        # dump1090 but without the system-packages step had librtlsdr and no
+        # rtl_test: a package-presence check would have passed on it, while the
+        # command the staged references tell the operator to run -- and the one
+        # that proves the blacklist above actually works -- was absent.
+        rtl_test = shutil.which("rtl_test")
+        add("rtl_test available", "pass" if rtl_test else "warn",
+            rtl_test or "not on PATH — install rtl-sdr; the staged SDR references "
+                        "and checklist section 9 both call for it")
 
     # --- desktop -------------------------------------------------------
     if "desktop_shortcuts" in selected_ids:
