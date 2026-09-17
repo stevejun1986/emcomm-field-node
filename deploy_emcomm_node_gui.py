@@ -3918,6 +3918,24 @@ class ProvisionerGUI(tk.Tk):
                         "leaves this machine."),
                   wraplength=660, foreground="#666666", justify="left").pack(anchor="w", pady=(14, 8))
 
+        # On this screen specifically, because this is where root is granted
+        # and the risky operations are the privileged ones. Cancel is safe for
+        # every step the operator picked; it is the package transactions
+        # underneath them that are not, and that distinction is invisible from
+        # the options screen.
+        self.sudo_cancel_warning = ttk.Label(
+            f,
+            text=("\u26a0  Cancelling during a package install is the one unsafe stop.\n"
+                  "     Downloads, map-tile fetches and builds stop cleanly \u2014 partial work "
+                  "stays on disk and re-running the step resumes it. But apt and dpkg are "
+                  "left to finish on purpose: interrupting one mid-transaction can leave "
+                  "packages half-configured, which affects other software on this machine, "
+                  "not just this run. Recovery is `sudo dpkg --configure -a`.\n"
+                  "     So if you cancel while packages are installing, expect a wait rather "
+                  "than an instant stop. That wait is deliberate."),
+            wraplength=660, justify="left", foreground="#b8860b")
+        self.sudo_cancel_warning.pack(anchor="w", pady=(4, 8))
+
         btns = ttk.Frame(f)
         btns.pack(fill="x", pady=(10, 0))
         ttk.Button(btns, text="\u2190 Back", command=self._back_from_sudo).pack(side="left")
