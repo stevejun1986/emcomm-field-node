@@ -82,7 +82,9 @@ Installed and configured by the provisioner:
   `127.0.0.1:8085` for the PDF reference library
 * **Weather satellite imagery:** SatDump (via RTL-SDR)
 * **SDR command-line tools:** `rtl-sdr` — `rtl_test`, `rtl_fm`, `rtl_power`;
-  `rtl_test -t` is what the dongle-contention check calls for
+  `rtl_test -t` is what the dongle-contention check calls for. Installed by
+  either SDR step as well as by system packages, so a node that took SatDump or
+  dump1090 alone still has it
 * **ADS-B aircraft tracking:** dump1090 (via RTL-SDR) — installed but **not**
   started automatically; see the note below
 * **Automation:** optional dock-triggered autostart (udev + systemd), desktop
