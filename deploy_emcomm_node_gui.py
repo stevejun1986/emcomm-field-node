@@ -1092,42 +1092,56 @@ Back up a known-good node and clone it to the rest of the fleet:
 
 Read this before troubleshooting a node that "is not detected". A serial
 port is an exclusive open -- first process wins, and the loser reports a
-broken radio rather than a conflict. Three things on a Mint node can get
-there first, and none of them care what your Meshtastic settings are.
+broken radio rather than a conflict.
 
-**gpsd, by bridge chip.** gpsd's hotplug rule
-(`/lib/udev/rules.d/25-gpsd.rules`) matches the USB-serial bridge by
-vendor and product ID -- PL2303, FTDI, CP210x are all in it. Meshtastic
-boards commonly use CP2102 or CH340, so plugging one in makes gpsd take
-an interest **whatever the node is configured to do**: with the Serial
-Module off, and regardless of the radio's own GPS. The hotplug only
-stashes the device path; gpsd opens it when a client asks for data,
-sniffs, and drops it if the output is not something it recognizes. So
-this is a collision window rather than a permanent hold -- but the
-window is a real open on the port, and the CLI loses if it is mid-
-conversation.
+On a stock Mint node with a Meshtastic board attached, **measured rather
+than assumed, nothing claims the port**. The detail is worth keeping,
+because the reasoning that predicts otherwise is plausible and wrong.
 
-**ModemManager.** Probes new `ttyUSB`/`ttyACM` devices for a modem,
-holding the port and sending AT commands for several seconds after
-plug-in. Usually a delay rather than a failure, but it is a delay that
-looks like a dead node.
+**gpsd does not claim by bridge chip on Debian or Mint.** Its hotplug
+rules live at `/usr/lib/udev/rules.d/60-gpsd.rules`, and the generic
+USB-serial bridge entries in it -- PL2303, FTDI, CP210x -- are all
+**commented out**, each marked:
 
-**brltty.** Claims CH340/CH341 adapters as braille displays. This one is
-the nastiest, because the device node does not go busy -- it does not
-appear at all, so the symptom is "nothing enumerated" rather than
-"something has it".
+    # !!! rule disabled in Debian as it matches too many other devices
 
-Working out which:
+What remains enabled matches specific GPS receivers by exact VID:PID:
+u-blox 5 through 9, Garmin GPSmap, Delorme, ATEN UC-232A, a MediaTek
+HOLUX, a Telit module. A Meshtastic board is not in that list and will
+not be auto-attached, whatever bridge chip it uses and whatever the
+Serial Module is set to.
+
+Upstream gpsd does ship the broad bridge rules, so this is a
+Debian-specific narrowing. On another distribution, check the file
+before assuming the same.
+
+**ModemManager flags the device but does not take it.** udev marks a
+Meshtastic board `ID_MM_CANDIDATE=1`, so MM is entitled to probe it.
+Observed on a Seeed Wio Tracker L1 Pro (`2886:1668`, native CDC-ACM):
+`mmcli -L` reports no modems, the journal records no probe, and
+`meshtastic --info` connects first try with no delay. The flag is an
+invitation ModemManager declines.
+
+**brltty** claims CH340/CH341 adapters as braille displays, and is the
+one worth knowing about because the device node does not go busy -- it
+does not appear at all, so the symptom is "nothing enumerated" rather
+than "something has it". Not exercised here: it was inactive on the
+node tested, and the board tested is native CDC rather than CH340.
+
+Working out which, if a node ever does go quiet:
 
     ls -l /dev/serial/by-id/          # is it there at all -- if not, suspect brltty
-    sudo lsof /dev/ttyUSB0            # who holds it
+    sudo lsof /dev/ttyACM0            # who holds it (ttyUSB0 for bridge-chip boards)
     systemctl is-active ModemManager gpsd.socket brltty
+    mmcli -L                          # has ModemManager taken it as a modem
+    udevadm info -q property -n /dev/ttyACM0 | grep -E 'ID_VENDOR_ID|ID_MODEL_ID|ID_MM'
 
-The durable fix is to exclude the node's own VID:PID from whichever
-service is claiming it, the same way `/etc/modprobe.d/` keeps the kernel
-DVB-T driver off the RTL-SDR. Stopping gpsd works for a session and
-comes back on the next boot or dock event -- the dock autostart restarts
-`gpsd.socket` every time it runs.
+If something is holding it, the durable fix is to exclude the node's own
+VID:PID from that service -- `ENV{ID_MM_DEVICE_IGNORE}="1"` in a udev
+rule for ModemManager, the same shape as `/etc/modprobe.d/` keeping the
+kernel DVB-T driver off the RTL-SDR. Stopping a service works for one
+session and comes back on the next boot or dock event; the dock autostart
+restarts `gpsd.socket` every time it runs.
 
 ## NMEA position output - LEAVE THIS OFF
 
@@ -1139,21 +1153,14 @@ reporting a valid position, at 38400 8N1.
 whole of this section.** It is off by default, which is the correct
 state for this node.
 
-Turning it on escalates the gpsd problem described in the section
-above. With NMEA off, gpsd sniffs the port, fails to recognize the
-output and drops it. With NMEA on, the node *is* a GPS receiver as far
-as gpsd is concerned, so it keeps the port -- and `meshtastic --info`
-then fails to open a device that is plainly plugged in, with nothing
-saying a GPS daemon holds it. A momentary collision becomes a standing
-one. See `dongle_arbitration.md` under `SDR/` for the same failure on
-the RTL-SDR side.
+The reason is not contention. An earlier version of this document said
+enabling NMEA would let gpsd take the port; on Debian and Mint it will
+not, because gpsd auto-attaches only to a listed GPS receiver and a
+Meshtastic board is not one -- see the section above.
 
-Note this is independent of the radio's own GPS. `position.gps_enabled`
-puts the node's location into mesh packets over LoRa and presents
-nothing to the host; leave it on if you want position in the mesh. It
-is the Serial Module below that puts data on the USB port.
-
-The integration it was added for does not work as described anyway:
+The reason is that **the integration it exists for does not work**, so
+turning it on buys nothing and costs a setting you then have to remember
+is set:
 
 * **gpsd cannot carry the peer waypoints.** Its client protocol reports
   TPV and SKY objects -- time/position/velocity and satellite data for
@@ -1164,6 +1171,11 @@ The integration it was added for does not work as described anyway:
   flight data, AIS vessel positions, and GPS location data over a TCP
   NMEA connection -- not the gpsd daemon. A serial-to-TCP bridge would
   be needed, and that still only moves the node's own position.
+
+Note this is independent of the radio's own GPS. `position.gps_enabled`
+puts the node's location into mesh packets over LoRa and presents
+nothing to the host; leave it on if you want position in the mesh. It is
+the Serial Module that puts data on the USB port.
 
 If you want mesh peer positions on the map, the path that actually
 works is a file, not a live feed: read the node list and convert it to
@@ -1176,13 +1188,13 @@ To turn it on anyway, knowing the above:
     meshtastic --set serial.enabled true
     meshtastic --set serial.mode NMEA
 
-and expect to arbitrate the port against gpsd yourself -- masking
-gpsd's udev hook for that device, or stopping gpsd before using the
-CLI.
+VERIFIED on a Seeed Wio Tracker L1 Pro against a provisioned node: the
+board enumerates as native CDC-ACM, no service claims the port, and
+`meshtastic --info` connects first try.
 
-UNVERIFIED: the gpsd and QMapShack behavior above is read from their
-documentation, not observed on this node. The $GPWPL-to-GPX conversion
-is not written; nothing in this repository does it for you.
+UNVERIFIED: that gpsd ignores $GPWPL and that QMapShack cannot read gpsd
+are read from their documentation, not observed. The $GPWPL-to-GPX
+conversion is not written; nothing in this repository does it for you.
 
 ## Operating note: this is an open net
 
