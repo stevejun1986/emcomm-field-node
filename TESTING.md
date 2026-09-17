@@ -60,6 +60,26 @@ grep -nE "PLACEHOLDER|/home/" ~/.config/QLandkarteGT/QMapShack.conf
 `PLACEHOLDER` token should remain anywhere — a literal token that survives is
 used as a real value, which is worse than a missing setting.
 
+## One login gates three things
+
+A run leaves three things waiting on a fresh login, and each fails in a way that
+points away from the shared cause:
+
+| Symptom | Actual cause |
+| --- | --- |
+| `meshtastic`: command not found | `~/.local/bin` joins PATH from `~/.profile` only `if [ -d "$HOME/.local/bin" ]`, evaluated at login. The provisioner may have just created it |
+| Permission error on `/dev/ttyACM*` | `dialout` membership is not in effect yet |
+| `emcomm-mesh-gpx.service` not running | enabled, deliberately not started — see below |
+
+```bash
+echo "$PATH" | tr ':' '\n' | grep -x "$HOME/.local/bin"
+id -nG | tr ' ' '\n' | grep -x dialout
+systemctl --user is-active emcomm-mesh-gpx.service
+```
+
+Log out and back in, or reboot, before judging any of it. The verification screen
+says so on the way out, and the run log carries the same line.
+
 ## Mesh-to-GPX bridge: what has and has not been tested
 
 Installed by the Meshtastic step **only when QMapShack is also on PATH**. On a node
