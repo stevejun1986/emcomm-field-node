@@ -98,6 +98,7 @@ import platform
 import queue
 import re
 import shutil
+import signal
 import stat
 import subprocess
 import sys
@@ -566,6 +567,12 @@ class Ctx:
 
     def __post_init__(self):
         self.data_dir = self.home / DATA_DIR_NAME
+        # The child ctx.run() is currently waiting on, so Cancel can reach it.
+        # Written from the worker thread and read from the Tk thread, hence
+        # the lock: without it the reader can see a process object that the
+        # worker has already finished with.
+        self._active_child = None
+        self._child_lock = threading.Lock()
         # Nothing here has a terminal to prompt into (unzip's "replace
         # file?", apt's debconf dialogs, needrestart's service-restart
         # prompt). Without a way to answer, an interactive prompt is a
@@ -615,15 +622,74 @@ class Ctx:
     # supply — a GUI child has no terminal to prompt into, so a hang
     # here would otherwise be silent AND uncancellable, since Cancel
     # only checks between steps, not mid-command.
-    def run(self, cmd, check=True, **kw):
+    def run(self, cmd, check=True, interruptible=True, **kw):
+        """Run a child and wait for it. Interruptible by Cancel, by default.
+
+        Popen rather than subprocess.run so the process is nameable while it
+        runs -- subprocess.run gives no handle until it is over, which is the
+        reason Cancel used to be checkpoint-only. start_new_session puts the
+        child in its own process group so terminate_active_child() can signal
+        the whole tree: killing `make` alone leaves its compilers running.
+
+        interruptible=False for anything that must not be stopped part-way.
+        Nothing in this file passes it yet; ctx.sudo() is the blunt version of
+        the same idea, and is never interruptible -- see there.
+        """
         self.cancel_check()
         kw.setdefault("stdin", subprocess.DEVNULL)
         kw.setdefault("stdout", subprocess.PIPE)
         kw.setdefault("stderr", subprocess.STDOUT)
         kw.setdefault("text", True)
-        return subprocess.run(cmd, check=check, **kw)
+        if not interruptible:
+            return subprocess.run(cmd, check=check, **kw)
+
+        proc = subprocess.Popen(cmd, start_new_session=True, **kw)
+        with self._child_lock:
+            self._active_child = proc
+        try:
+            out, _ = proc.communicate()
+        finally:
+            with self._child_lock:
+                self._active_child = None
+        # A terminated child surfaces as an ordinary non-zero exit. Ask whether
+        # Cancel was pressed before reporting it as a command failure, so a
+        # deliberate stop does not read as a broken step.
+        self.cancel_check()
+        if check and proc.returncode != 0:
+            raise subprocess.CalledProcessError(proc.returncode, cmd, output=out)
+        return subprocess.CompletedProcess(cmd, proc.returncode, out, None)
+
+    def terminate_active_child(self):
+        """Signal the child ctx.run() is waiting on, if any. Safe to call from
+        another thread, and a no-op when nothing is running.
+
+        SIGTERM to the process group, not the process: `make -j` and
+        `fetch_map_tiles.py` both have children of their own, and signalling
+        only the leader leaves those orphaned and still working.
+        """
+        with self._child_lock:
+            proc = self._active_child
+        if proc is None or proc.poll() is not None:
+            return
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+        except (ProcessLookupError, PermissionError, OSError):
+            # Already gone, or not ours to signal. The cancel event still
+            # stops the run at the next checkpoint either way.
+            pass
 
     def sudo(self, *args, check=True, **kw):
+        """Deliberately NOT interruptible, unlike ctx.run().
+
+        Almost everything that goes through sudo here is a package
+        transaction -- apt, dpkg, debconf -- and killing one part-way leaves
+        dpkg needing `dpkg --configure -a` before anything else can install.
+        A cancelled run that also breaks the package manager is a worse
+        outcome than one that takes another thirty seconds to stop.
+
+        `make install` is the other sudo caller, and writing half a SatDump
+        into /usr is the same class of problem.
+        """
         self.cancel_check()
         kw.setdefault("stdin", subprocess.DEVNULL)
         kw.setdefault("stdout", subprocess.PIPE)
@@ -3483,6 +3549,10 @@ class ProvisionerGUI(tk.Tk):
         self.msg_queue: "queue.Queue[tuple]" = queue.Queue()
         self.cancel_event = threading.Event()
         self.worker: Optional[threading.Thread] = None
+        # Set when a run starts; None before that, so Cancel or Close pressed
+        # on an earlier screen has nothing to signal rather than an attribute
+        # that does not exist yet.
+        self.ctx: Optional[Ctx] = None
         self.askpass: Optional[AskpassSession] = None
         self.runlog: Optional[RunLog] = None
         self.component_vars: dict[str, tk.BooleanVar] = {}
@@ -4087,6 +4157,10 @@ class ProvisionerGUI(tk.Tk):
             spin_stop=self._queue_spin_stop,
             spin_progress=self._queue_spin_progress,
         )
+        # Held so Cancel can reach the child ctx.run() is waiting on. Read
+        # from the Tk thread while the worker writes to it; Ctx does its own
+        # locking around the process handle itself.
+        self.ctx = ctx
         self.worker = threading.Thread(target=self._run_provisioning,
                                         args=(ctx, self.selected_ids), daemon=True)
         self.worker.start()
@@ -4187,11 +4261,23 @@ class ProvisionerGUI(tk.Tk):
             self.runlog.close()
 
     def _on_cancel(self):
-        if messagebox.askyesno("Cancel provisioning",
-                                "Stop after the current step finishes?\n"
-                                "(A command already running will not be killed mid-way.)"):
+        if messagebox.askyesno(
+                "Cancel provisioning",
+                "Stop the run?\n\n"
+                "A download, a map-tile fetch or a build in progress is stopped "
+                "now — whatever it had finished stays on disk, and re-running "
+                "the step starts it again.\n\n"
+                "A package install is allowed to finish first. Interrupting apt "
+                "part-way leaves the package system needing repair, which is a "
+                "worse outcome than waiting.\n\n"
+                "Verification still runs, so you can see what landed."):
+            # Order matters: arm the event first so nothing new starts, then
+            # signal the child. Killing first would let the next iteration of
+            # a retry loop begin before the event is seen.
             self.cancel_event.set()
             self.cancel_btn.configure(state="disabled")
+            if self.ctx is not None:
+                self.ctx.terminate_active_child()
 
     def _on_close(self):
         if self.worker and self.worker.is_alive():
@@ -4199,6 +4285,8 @@ class ProvisionerGUI(tk.Tk):
                                         "A run is still active. Quit anyway?"):
                 return
             self.cancel_event.set()
+            if self.ctx is not None:
+                self.ctx.terminate_active_child()
         if self.askpass:
             self.askpass.close()
         if self.runlog:

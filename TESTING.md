@@ -219,8 +219,20 @@ checksum. If a step is not safely re-runnable, that is a bug worth reporting.
 
 ## Known rough edges
 
-* **Cancel is checkpoint-based**, not immediate. A running `apt-get` or a SatDump
-  build finishes or fails first. To stop a genuinely stuck run, kill the process.
+* **Cancel stops a download or a build immediately; a package install finishes
+  first.** Pressing Cancel signals whatever child is running — the map-tile
+  fetch, a `git clone`, the SatDump compile — including its own children, so a
+  `make -j` does not leave compilers behind. Whatever had completed stays on
+  disk; re-running the step starts it again.
+
+  `apt`, `dpkg` and `make install` run through the privileged path and are
+  deliberately left alone. Interrupting a package transaction leaves dpkg
+  needing `dpkg --configure -a` before anything else can install, which is a
+  worse outcome than waiting for it. So Cancel during a long `apt` still waits
+  for that command, and stops at the next checkpoint.
+
+  Verification runs after a cancel either way — what landed before the stop is
+  usually the thing you want to see.
 * **Long steps show only a spinner.** Output is captured and printed in full only
   if the step fails — deliberate, so the terminal behind the GUI stays quiet.
 * **`python3-tk` is required** and is not bundled with Python on Debian/Ubuntu/
