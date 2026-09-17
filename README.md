@@ -224,6 +224,35 @@ and all four are wrong on someone else's machine.
 
 ---
 
+## Verifying a release download
+
+Releases are signed with this SSH key:
+
+```text
+ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIIgY7UVCUi3z4Un9Dxl83TF1iCjZSODEvNdetP7Omc1Z
+```
+
+Put that in a file called `allowed_signers`, prefixed with a label:
+
+```text
+release@emcomm-field-node ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIIgY7UVCUi3z4Un9Dxl83TF1iCjZSODEvNdetP7Omc1Z
+```
+
+Then, alongside the downloaded tarball, its `.sig` and `SHA256SUMS`:
+
+```bash
+sha256sum -c SHA256SUMS
+ssh-keygen -Y verify -f allowed_signers -I release@emcomm-field-node \
+    -n file -s emcomm-field-node-<version>.tar.gz.sig \
+    < emcomm-field-node-<version>.tar.gz
+```
+
+Both should pass; the second prints `Good "file" signature`. **If either fails, do not
+run the provisioner** — report it on the issue tracker.
+
+Key fingerprint, for checking a copy you got elsewhere:
+`SHA256:Ut/j+m5SlkA1xGBz4wLK9S+9FKXON2Yoj9NYyanTgmw`
+
 ## Requirements
 
 ```bash
