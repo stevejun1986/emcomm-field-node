@@ -87,9 +87,18 @@ without QMapShack it is skipped and the run says so — that is correct behavior
 a failure, and verification reports it as a single explanatory warning rather than a
 missing file.
 
-**No radio has ever driven this.** Everything below has been exercised against
-recorded node data: the GPX rendering, the conditional install, and the failure
-paths. A live mesh has not been in the loop.
+**Verified end to end on 2026-09-17** — a Wio Tracker L1 Pro on a 9-node mesh,
+peers 0 to 7 hops out. Four of nine nodes had positions and exactly those four
+reached the GPX; three matched `meshtastic --info` to seven decimal places on
+position, altitude and last-heard time, and the fourth was the local node whose
+GPS refreshed between the two commands. Every claim below has now been tested on
+hardware rather than inferred.
+
+**CAUTION: `meshtastic --info` prints `security.privateKey` in plaintext**, along
+with your position and every peer you have heard. Read it freely; do not paste it
+into an issue, a forum post or a screenshot. If it has already gone somewhere
+public, regenerate the node keypair. Share `journalctl --user -u emcomm-mesh-gpx`
+instead.
 
 What to confirm on hardware, in order:
 
@@ -114,20 +123,38 @@ Peers appear only once they have **sent** a position. A peer with
 `position.gps_enabled` off is known to the mesh and absent from the GPX — that is
 the mesh's state, not a defect in the bridge, and the poll says so in the log.
 
-Three things are worth settling that the bench could not:
+What the hardware run settled:
 
-1. **Does it fight you for the radio?** It should not: each poll opens the port,
-   reads, and closes it, and skips a cycle if something else has it. With the
-   service running, `meshtastic --info` should still work. **If that command fails
-   only while the service is running, the port release is not working as designed**
-   — capture `journalctl --user -u emcomm-mesh-gpx` and treat it as a defect.
-2. **Does QMapShack notice the file changing?** Assumed no — an import is a
-   snapshot, so a refreshed map means importing again. If it does pick up changes
-   on its own, the bridge is better than documented, and this section plus the
-   staged reference should both be corrected.
-3. **Do the waypoints land where you expect?** `<metadata><time>` is the poll time;
+1. **It does not fight you for the radio.** `meshtastic --info` connected normally
+   while the service was running. Each poll opens the port, reads and closes it.
+   **If that command ever fails only while the service runs, the port release has
+   regressed** — capture `journalctl --user -u emcomm-mesh-gpx` and treat it as a
+   defect.
+2. **QMapShack does not notice the file changing.** Tested on 1.17.1: with the
+   service stopped, a waypoint moved half a degree and the file swapped in by
+   rename — the same way the bridge writes it — the open project did not redraw.
+   An import is a snapshot, and every load creates a **new** project rather than
+   updating one, so a refreshed map means deleting the stale project and importing
+   again. Re-test if you upgrade QMapShack.
+3. **The waypoints land where the radio says.** `<metadata><time>` is the poll time;
    each `<wpt><time>` is that peer's last-heard time, so a stale peer keeps its old
    position and says how old it is rather than disappearing.
+
+Loading it, in a form that survives version changes:
+
+```bash
+qmapshack "$HOME/EMCOMM_Data/Meshtastic/mesh_nodes.gpx"
+```
+
+or drag the file onto the workspace. An empty-looking map is **not** a failed
+import: QMapShack logs `Empty filename passed to function` repeatedly when its map
+sources point at tile directories holding nothing, which is the state of a node
+whose map step has not run. The waypoints load regardless.
+
+**Peer positions may be approximate.** A position arriving over the air is
+quantized by the channel's `positionPrecision`; on the mesh tested, at precision
+13, two nodes two kilometres apart reported identical coordinates to seven decimal
+places. Only the local node's own position arrives at full GPS precision.
 
 ## Dock trigger: verifying it actually fires
 
