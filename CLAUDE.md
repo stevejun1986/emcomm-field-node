@@ -259,6 +259,16 @@ forever.
 
     bump → merge to `main` → tag that commit → build the tarball from it
 
+**Tags are annotated.** `git tag -a v1.2.0 -m "..."`, not a bare `git tag v1.2.0`.
+An annotated tag is its own object carrying a tagger, a date and a message; a
+lightweight one is a bare pointer with none of that, so when a tag is moved —
+which has happened here — nothing records that it was, or when, or why.
+
+Existing tags are mixed: `v1.0.0` is annotated, `v1.0.1` and `v1.0.2` are
+lightweight. They are left as they are. Retagging them would move tags that
+published releases point at, for no benefit to anyone who already has the
+artifacts.
+
 Build the tarball from the tagged commit, not from a working tree. Signing
 attests to bytes; bytes that no tag points at cannot be checked by anyone else.
 
