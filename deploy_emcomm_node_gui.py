@@ -550,18 +550,15 @@ class Ctx:
     spin_stop: Callable[[bool], None]         # resolve it to a check mark / cross
     spin_progress: Callable[[str], None]      # update the trailing text of the active spin line
     data_dir: Path = field(init=False)
-    # Two different facts, kept apart because one flag conflating them meant a
-    # failed `make install` still added a desktop shortcut to a binary that was
-    # not there.
+    # `make install` succeeded, so /usr/bin/satdump and
+    # /usr/share/applications/satdump.desktop exist. Gates anything needing
+    # those paths -- specifically the desktop shortcut in finalize().
     #
-    #   satdump_installed        a satdump binary exists and is usable, whether
-    #                            system-wide or only in the build tree. Gates
-    #                            the user-level config under ~/.config/satdump,
-    #                            which a build-tree binary reads just the same.
-    #   satdump_system_installed `make install` succeeded, so /usr/bin/satdump
-    #                            and /usr/share/applications/satdump.desktop
-    #                            exist. Gates anything that needs those paths.
-    satdump_installed: bool = False
+    # The name is this precise because one flag once conflated "a binary
+    # exists somewhere" with "it was installed to /usr", and a failed
+    # `make install` still added a shortcut to a binary that was not there.
+    # A build-tree SatDump is usable and reads ~/.config/satdump the same
+    # way; it just has nothing under /usr to point a shortcut at.
     satdump_system_installed: bool = False
 
     def __post_init__(self):
@@ -2800,9 +2797,9 @@ def optional_satdump(ctx: Ctx):
         ctx.log(f"[!] 'make install' failed — the binary works at {build_dir}/satdump "
                 f"but is not on PATH and has no desktop entry.", "warn")
 
-    # Usable either way: the build succeeded, so the user-level TLE config
-    # below is worth writing and a build-tree binary will read it.
-    ctx.satdump_installed = True
+    # Reached only when the build succeeded, so the user-level TLE config
+    # below is worth writing either way -- a build-tree binary reads
+    # ~/.config/satdump exactly as an installed one does.
     _ensure_rtl_sdr_tools(ctx)
     _blacklist_dvb_driver(ctx)
     _stage_dongle_reference(ctx)
@@ -2812,8 +2809,7 @@ def optional_satdump(ctx: Ctx):
     # finding of its own rather than a consequence of the line above.
     ctx.satdump_system_installed = installed
 
-    if ctx.satdump_installed:
-        _configure_satdump_tles(ctx)
+    _configure_satdump_tles(ctx)
 
 
 def _configure_satdump_tles(ctx: Ctx):
@@ -2908,8 +2904,9 @@ def finalize(ctx: Ctx):
     desktop_dir.mkdir(parents=True, exist_ok=True)
 
     apps = ["qmapshack.desktop", "org.kiwix.desktop.desktop", "js8call.desktop", "chirp.desktop"]
-    # satdump_system_installed, not satdump_installed: the .desktop file comes
-    # from `make install`, so a build-tree-only SatDump has no shortcut to copy.
+    # Gated on the system install, not merely on SatDump being usable: the
+    # .desktop file comes from `make install`, so a build-tree-only SatDump
+    # has no shortcut to copy.
     if ctx.satdump_system_installed:
         apps.append("satdump.desktop")
 
