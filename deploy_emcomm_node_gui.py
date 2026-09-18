@@ -3366,6 +3366,87 @@ def verify_deployment(ctx: Ctx, selected_ids: set) -> list:
             "%s can import meshtastic" % python3 if importable
             else "%s cannot import meshtastic — the CLI and the GPX bridge both "
                  "need it" % python3)
+
+        # The import row proves the library loads under python3. It does not
+        # prove the console script the operator actually types is runnable:
+        # the wrapper carries its own shebang, and a wrapper written against an
+        # interpreter that later moved is on disk, importable, and broken.
+        #
+        # --version is safe to run with no hardware attached. It is declared
+        # action="version", so argparse prints it and exits during parsing,
+        # before any device code is reached -- it cannot block on a port or
+        # probe for a board. Confirmed on a machine with no serial devices at
+        # all: exit 0, ~0.2s.
+        cli = shutil.which("meshtastic") or str(home / ".local" / "bin" / "meshtastic")
+        try:
+            v = subprocess.run([cli, "--version"], stdin=subprocess.DEVNULL,
+                               capture_output=True, text=True, timeout=30)
+        except subprocess.TimeoutExpired:
+            add("Meshtastic CLI runs", "fail",
+                "%s --version did not return within 30s" % cli)
+        except OSError as e:
+            add("Meshtastic CLI runs", "fail", "%s could not be executed (%s)" % (cli, e))
+        else:
+            if v.returncode == 0:
+                add("Meshtastic CLI runs", "pass",
+                    "%s --version -> %s" % (cli, v.stdout.strip() or "(no output)"))
+            else:
+                # --version never reaches a device, so a failure here is the
+                # install, not the hardware.
+                tail = (v.stderr or v.stdout or "").strip().splitlines()
+                add("Meshtastic CLI runs", "fail",
+                    "%s --version exited %d%s" % (cli, v.returncode,
+                                                  " — " + tail[-1] if tail else ""))
+
+        # Device presence, by enumeration only. Nothing here opens a port.
+        #
+        # Deliberately NOT `meshtastic --info`, which would be the obvious
+        # probe and is wrong three ways on this node:
+        #   * it prints security.privateKey to stdout, so capturing it puts the
+        #     node's private key in the log pane and in anything the operator
+        #     saves or pastes -- the exposure the setup reference warns about;
+        #   * with no board it falls back to a TCP connection on localhost,
+        #     which a read-only verification pass has no business opening;
+        #   * with more than one serial port it exits 1 demanding --port, and a
+        #     second port is the *designed* configuration here -- gpsd is in
+        #     the stack and Direwolf wants a radio interface on ttyUSB/ttyACM.
+        #     A fully-equipped node would fail the row and a bare one pass it.
+        #
+        # So this row reports what is plugged in and never returns "fail":
+        # no board attached during provisioning is the normal case, not a
+        # defect. Whether the CLI can actually talk to a board is a question
+        # this pass cannot answer honestly -- see the dialout note below.
+        if importable:
+            probe = subprocess.run(
+                [python3, "-c",
+                 "import json, meshtastic.util as u; print(json.dumps(u.findPorts(True)))"],
+                stdin=subprocess.DEVNULL, capture_output=True, text=True)
+            try:
+                ports = json.loads(probe.stdout) if probe.returncode == 0 else None
+            except (ValueError, TypeError):
+                ports = None
+            if ports is None:
+                add("Meshtastic serial device detected", "warn",
+                    "could not enumerate serial ports; the CLI's own detection failed "
+                    "to run")
+            elif not ports:
+                add("Meshtastic serial device detected", "warn",
+                    "no serial device present — nothing to reach. Not a defect: most "
+                    "provisioning runs have no node plugged in.")
+            elif len(ports) == 1:
+                add("Meshtastic serial device detected", "pass",
+                    "%s — note that 'dialout' does not take effect until the operator "
+                    "logs out and back in, so this session still may not be able to "
+                    "open it" % ports[0])
+            else:
+                # Not a fault, but the operator needs to know: bare `meshtastic`
+                # commands refuse to guess between them.
+                add("Meshtastic serial device detected", "pass",
+                    "%d serial ports present (%s) — meshtastic will refuse to pick "
+                    "one, so field commands need --port <path>. Expected on a node "
+                    "that also carries a GPS puck or a radio interface."
+                    % (len(ports), ", ".join(ports)))
+
         groups = subprocess.run(["id", "-nG", ctx.user], stdin=subprocess.DEVNULL,
                                 capture_output=True, text=True).stdout.split()
         add("Operator in 'dialout' group", "pass" if "dialout" in groups else "warn",
