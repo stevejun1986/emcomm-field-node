@@ -2912,35 +2912,68 @@ def _configure_satdump_tles(ctx: Ctx):
         shutil.copy(tle_src, satdump_config_dir / "satdump_tles.txt")
         ctx.log(f"[+] Synced {tle_src} -> {satdump_config_dir}/satdump_tles.txt", "ok")
 
+        # Stop the auto-update by the setting built for it, and do not touch
+        # tle_settings at all.
+        #
+        # Emptying the fetch lists -- what #26 concluded and what shipped --
+        # looks like "never fetch" and is not. On launch SatDump loads
+        # satdump_tles.txt into the registry, then calls autoUpdateTLE
+        # (init.cpp L113-115), which calls updateTLEFile because the interval
+        # has elapsed: a fresh node has no user.tles_last_updated and the
+        # stock interval is "1 day". Inside, the fetch loops are plain
+        # range-for over those lists, and what follows them is unconditional:
+        #
+        #     std::ofstream outfile(path, std::ios::trunc);   // tle.cpp L180
+        #     for (TLE &tle : new_registry) ...               // empty
+        #
+        # So empty lists truncate satdump_tles.txt on first launch and log
+        # "0 TLEs loaded!" -- deleting the very set this branch just staged.
+        # Latent rather than shipped here, because configs/ carries no TLE
+        # file and this branch never runs on a stock clone; a group that
+        # supplies one would lose it.
+        #
+        # "Never" sets honor_setting = false (tle.cpp L198-199) so that clause
+        # never fires. The remaining `|| registry.size() == 0` is a deliberate
+        # fallback for a node whose staged file failed to load, and it is why
+        # the fetch lists must keep SatDump's real defaults: left empty that
+        # fallback truncates; left alone it fetches. See #26 and
+        # stevejun1986/s.t.n.d.-team-node#32.
         satdump_global_cfg = Path("/usr/share/satdump/satdump_cfg.json")
-        if satdump_global_cfg.is_file():
-            ctx.sudo("cp", str(satdump_global_cfg), f"{satdump_global_cfg}.{PROJECT}-backup")
-            text = satdump_global_cfg.read_text()
-            text = re.sub(
-                r'^( *)("http://celestrak\.org/NORAD/elements/gp\.php\?GROUP=active&FORMAT=tle")',
-                r"\1// \2", text, flags=re.MULTILINE)
-            text = re.sub(r"^( *)29499,", r"\1// 29499,", text, flags=re.MULTILINE)
-            text = re.sub(r"^( *)35865 ", r"\1// 35865 ", text, flags=re.MULTILINE)
-            ctx.sudo_write(str(satdump_global_cfg), text)
-            ctx.log(f"[+] Curated set staged — disabled SatDump global bulk TLE fetch "
-                    f"(backup: {satdump_global_cfg}.{PROJECT}-backup).", "ok")
-        else:
-            ctx.log(f"[!] SatDump global config not found at {satdump_global_cfg} — bulk "
-                    f"TLE fetch NOT disabled, and it will overwrite the curated set on "
-                    f"first launch.", "warn")
+        cfg_backup = Path(f"{satdump_global_cfg}.{PROJECT}-backup")
+        if cfg_backup.is_file():
+            # An earlier run commented the bulk URL and both NORAD IDs out of
+            # the packaged config, which leaves exactly the empty lists above.
+            ctx.sudo("cp", str(cfg_backup), str(satdump_global_cfg))
+            ctx.sudo("rm", "-f", str(cfg_backup))
+            ctx.log("[+] Restored SatDump's stock global config — the previous "
+                    "arrangement would have emptied the curated TLE set.", "ok")
 
-        # Typed empties, not null. SatDump reads these as vector<string>,
-        # string and vector<int>; a null is a type error rather than a
-        # disable, and was observed sending the node down a worse fetch
-        # path with an error dialog on first launch (issue #26).
         satdump_settings = satdump_config_dir / "settings.json"
+        never = {"satdump_general": {"tle_update_interval": {"value": "Never"}}}
+        # settings.json is a sparse diff merged over the packaged config
+        # (config.cpp L119, merge_json_diffs), so this one key is the whole
+        # file -- the rest of the option object is inherited.
+        superseded = (
+            {"tle_settings": {"urls_to_fetch": [], "url_template": "", "tles_to_fetch": []}},
+            {"tle_settings": {"urls_to_fetch": None, "url_template": None, "tles_to_fetch": None}},
+        )
         if not satdump_settings.is_file():
-            satdump_settings.write_text(json.dumps({
-                "tle_settings": {"urls_to_fetch": [], "url_template": "", "tles_to_fetch": []}
-            }, indent=4) + "\n")
-            ctx.log("[+] Pre-seeded settings.json to disable user-level TLE auto-fetch.", "ok")
+            satdump_settings.write_text(json.dumps(never, indent=4) + "\n")
+            ctx.log("[+] Pre-seeded settings.json: TLE auto-update set to Never.", "ok")
         else:
-            ctx.log("[+] settings.json already exists — leaving as-is.", "ok")
+            try:
+                existing = json.loads(satdump_settings.read_text())
+            except (ValueError, OSError):
+                existing = None
+            # Replace only the exact files earlier runs wrote -- the empty-list
+            # form, and the null form that preceded it. Anything else is the
+            # operator's and is left alone.
+            if existing in superseded:
+                satdump_settings.write_text(json.dumps(never, indent=4) + "\n")
+                ctx.log("[+] Replaced the old settings.json pre-seed, which would have "
+                        "truncated the curated TLE set on first launch.", "ok")
+            else:
+                ctx.log("[+] settings.json already exists — leaving as-is.", "ok")
     else:
         ctx.log("[*] No curated TLE set under configs/ — leaving SatDump's own TLE "
                 "fetch enabled, so first launch loads its full default set.", "info")
