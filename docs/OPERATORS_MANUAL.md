@@ -786,4 +786,59 @@ Work down this list before deeper troubleshooting. Most faults are one of these.
 
 ---
 
+## Appendix C — What this draft still needs
+
+This is a **running draft**. It is kept in the repository and revised in place; the PDF
+is rebuilt from it rather than edited. What follows is the working list, recorded here so
+it survives between sessions.
+
+### Not yet walked against a running node
+
+No chapter has been followed start to finish on a provisioned machine with the hardware
+attached. Paths, unit names and commands were read out of the provisioner and are
+correct; the *procedures* around them are reasoned, not rehearsed.
+
+### Chapters most likely to be wrong
+
+Four tools are described from outside — installed and launched, but never operated from a
+provisioned node by anyone who wrote this:
+
+| Chapter | What needs an operator's eye |
+|---|---|
+| 6 — JS8Call | first-run setup order, and what a working audio configuration looks like |
+| 7 — ion2G | how a channel plan is actually loaded, and what running ALE looks like |
+| 8 — QLog | first-run fields, and where a Flatpak export really lands |
+| 16 — CHIRP | the read-before-write procedure against a specific radio |
+
+Corrections from someone who has used these on this hardware are worth more than anything
+that can be inferred from the provisioner.
+
+### Deliberately not covered
+
+* **Operating the radios.** Frequencies, power, antennas, propagation and the rules that
+  apply to you are outside this manual.
+* **The slim-appliance step.** It removes software at build time rather than adding
+  anything an operator uses. If a node is missing an application you expected, that step
+  is where to look.
+* **Building a node.** `README.md` and the `Pre-Deployment Config Checklist` own that.
+
+### Figures
+
+None yet. The rules for adding them are in the front matter, and they are not optional —
+a field node's screen carries operator identity in more places than people expect, window
+title bars included.
+
+### How to revise this
+
+    # edit the source
+    docs/OPERATORS_MANUAL.md
+
+    # rebuild the PDF
+    python3 scripts/build_manual.py
+
+The PDF is a build artifact and is not tracked. Every part, chapter and appendix starts
+on its own page, so a chapter can be printed and handed over on its own.
+
+---
+
 *End of draft.*

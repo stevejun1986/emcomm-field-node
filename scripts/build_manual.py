@@ -26,8 +26,9 @@ from reportlab.lib.pagesizes import LETTER
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import inch
 from reportlab.lib import colors
-from reportlab.platypus import (BaseDocTemplate, Frame, PageTemplate, Paragraph,
-                                Preformatted, Spacer, Table, TableStyle, HRFlowable)
+from reportlab.platypus import (BaseDocTemplate, Frame, PageBreak, PageTemplate,
+                                Paragraph, Preformatted, Spacer, Table, TableStyle,
+                                HRFlowable)
 
 SRC = Path("docs/OPERATORS_MANUAL.md")
 OUT = Path("docs/EmComm-Operators-Manual.pdf")
@@ -61,11 +62,15 @@ def build_styles():
                           leading=13.5, spaceAfter=7, alignment=TA_LEFT)
     return {
         "h1": ParagraphStyle("H1", parent=ss["Heading1"], fontSize=17, leading=21,
-                             spaceBefore=20, spaceAfter=10,
+                             spaceBefore=0, spaceAfter=12,
                              textColor=colors.HexColor("#1a1a1a")),
         "h2": ParagraphStyle("H2", parent=ss["Heading2"], fontSize=13.5, leading=17,
                              spaceBefore=16, spaceAfter=7,
                              textColor=colors.HexColor("#1a1a1a")),
+        # Chapters open a page, so the leading gap above them is dead space.
+        "h2_top": ParagraphStyle("H2Top", parent=ss["Heading2"], fontSize=13.5,
+                                 leading=17, spaceBefore=0, spaceAfter=9,
+                                 textColor=colors.HexColor("#1a1a1a")),
         "h3": ParagraphStyle("H3", parent=ss["Heading3"], fontSize=11, leading=14,
                              spaceBefore=12, spaceAfter=5,
                              textColor=colors.HexColor("#333333")),
@@ -118,6 +123,21 @@ def flush_table(rows, st, story):
     story.append(Spacer(1, 9))
 
 
+def next_is_heading(lines, i):
+    """True if the next non-blank line is a part or chapter heading.
+
+    Used to drop the rule that used to separate sections: with every section
+    starting its own page, a horizontal rule at the foot of the previous one
+    is just a smudge above white space.
+    """
+    for j in range(i + 1, len(lines)):
+        t = lines[j].strip()
+        if not t:
+            continue
+        return bool(re.match(r"^#{1,2} ", t))
+    return False
+
+
 def render(md, st):
     story, lines = [], md.splitlines()
     i, table, code = 0, [], []
@@ -164,15 +184,22 @@ def render(md, st):
             i += 1; continue
 
         if s == "---":
-            story.append(Spacer(1, 5))
-            story.append(HRFlowable(width="100%", thickness=0.6,
-                                    color=colors.HexColor("#c0c0bc")))
-            story.append(Spacer(1, 7))
+            if not next_is_heading(lines, i):
+                story.append(Spacer(1, 5))
+                story.append(HRFlowable(width="100%", thickness=0.6,
+                                        color=colors.HexColor("#c0c0bc")))
+                story.append(Spacer(1, 7))
         elif s.startswith("### "):
+            # Subsections stay with their chapter -- breaking here would
+            # scatter a chapter across pages that are mostly white.
             story.append(Paragraph(inline(s[4:]), st["h3"]))
         elif s.startswith("## "):
-            story.append(Paragraph(inline(s[3:]), st["h2"]))
+            if story:
+                story.append(PageBreak())
+            story.append(Paragraph(inline(s[3:]), st["h2_top"]))
         elif s.startswith("# "):
+            if story:
+                story.append(PageBreak())
             story.append(Paragraph(inline(s[2:]), st["h1"]))
         elif s.startswith("> "):
             quote = []
