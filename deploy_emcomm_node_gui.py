@@ -1915,6 +1915,154 @@ logger "{OPERATOR_PREFIX}: dock event dispatched to user session (uid $USER_UID)
             "TESTING.md.", "warn")
 
 
+GPS_CHRONY_DROPIN = "/etc/chrony/conf.d/10-%s-gps.conf" % PROJECT
+GPS_DEFAULTS_FILE = "/etc/default/gpsd"
+
+# The chrony side is safe to write on every node, with or without a receiver.
+# chronyd parses a refclock line with no gpsd running and simply reports the
+# source as unreachable -- checked against chrony 4.5 before shipping it.
+GPS_CHRONY_CONF = """# EmComm GPS time source. Written by the provisioner.
+#
+# GPS time arrives through gpsd's NTP shared-memory segment 0. chronyd creates
+# that segment while it is still root, then drops privileges; gpsd attaches to
+# it as root. That is why gpsd.service carries After=chronyd.service, and why
+# this provisioner restarts chrony BEFORE gpsd.
+#
+# offset: NMEA latency. The sentence describes an epoch it does not finish
+# transmitting until ~200ms later, most of that being 70 bytes at 4800 baud.
+# Measured at +206ms on a GlobalSat BU-353N; 0.2 left ~7ms residual, which is
+# inside the sentence-order jitter and not worth chasing.
+#
+# delay: honest uncertainty for an NMEA-only source. There is no PPS on a USB
+# puck, so this must not claim the sub-microsecond a PPS refclock would. It is
+# why the source reports +/-101ms when its real agreement with NTP is ~7ms.
+#
+# prefer: policy, not accuracy. Without it chronyd selects on error bounds and
+# the tighter NTP servers win -- and worse, when the network drops chronyd goes
+# on steering from an UNREACHABLE server for hours, because a stale source's
+# dispersion grows at only ~1ppm and takes that long to exceed 101ms. Measured
+# on a node: reach 0, last contact 190s earlier, still selected over a live GPS
+# at reach 377. A node built to outlive the network must not do that.
+#
+# NOT 'trust': prefer wins selection without telling chronyd to believe a GPS
+# that has gone wrong. trust would let a bad refclock reject healthy NTP.
+refclock SHM 0 refid GPS0 offset 0.2 delay 0.2 prefer
+"""
+
+
+def _read_gps_binding():
+    """Return (device, baud) declared in configs/gps.conf, or (None, None).
+
+    A declaration, never a probe. Opening a serial port asserts DTR, and some
+    CAT interfaces key PTT on DTR or RTS -- a provisioner that swept ttyUSB*
+    hunting for a GPS could put a radio on the air. The operator names the
+    device; this step trusts them and touches nothing else.
+
+    The file is per-unit hardware and is gitignored: a by-id path carries the
+    receiver's serial number, which is machine data and does not belong in the
+    repository. configs/gps.conf.sample ships instead.
+    """
+    src = Path("configs") / "gps.conf"
+    if not src.is_file():
+        return None, None
+    device = baud = None
+    try:
+        for raw in src.read_text().splitlines():
+            line = raw.strip()
+            if not line or line.startswith("#"):
+                continue
+            key, _, value = line.partition("=")
+            value = value.strip().strip('"').strip("'")
+            key = key.strip()
+            if key == "DEVICE":
+                device = value or None
+            elif key == "BAUD":
+                baud = value or None
+    except OSError as e:
+        raise RuntimeError("could not read configs/gps.conf: %s" % e)
+    return device, baud
+
+
+def optional_gps_time(ctx: Ctx):
+    """Give the node a time source that survives losing the network.
+
+    Without this, chrony's only configured sources are internet NTP pools. A
+    deployed node cannot reach them, never synchronises, and `chronyc tracking`
+    reports "Not synchronised" indefinitely -- which matters most to JS8Call,
+    whose timed transmit windows want the clock inside about a second.
+    """
+    ctx.log("[*] Configuring GPS time source (gpsd + chrony)...", "info")
+
+    # Written unconditionally: harmless without a receiver, and it means a puck
+    # attached later needs only the gpsd half rather than a re-provision.
+    ctx.sudo("mkdir", "-p", "/etc/chrony/conf.d")
+    ctx.sudo_write(GPS_CHRONY_DROPIN, GPS_CHRONY_CONF)
+    ctx.log(f"[+] chrony refclock written to {GPS_CHRONY_DROPIN}.", "ok")
+
+    # A hand-configured node may already carry a refclock on the same SHM unit
+    # under a different filename, or a line left in chrony.conf itself. Two
+    # sources on SHM 0 is not a configuration anyone intended, so say so rather
+    # than quietly adding a duplicate.
+    for other in sorted(Path("/etc/chrony/conf.d").glob("*.conf")):
+        if other.name == Path(GPS_CHRONY_DROPIN).name:
+            continue
+        try:
+            if "refclock SHM 0" in other.read_text():
+                ctx.log(f"[!] {other} also declares refclock SHM 0. Two sources on "
+                        f"the same segment is not intended — remove one before "
+                        f"restarting chrony.", "warn")
+        except OSError:
+            pass
+    try:
+        main_cfg = Path("/etc/chrony/chrony.conf").read_text()
+        if any(l.strip().startswith("refclock SHM 0") for l in main_cfg.splitlines()):
+            ctx.log("[!] /etc/chrony/chrony.conf carries its own refclock SHM 0 line. "
+                    "It will duplicate this one — comment it out; conf.d is where "
+                    "this belongs.", "warn")
+    except OSError:
+        pass
+
+    device, baud = _read_gps_binding()
+    if not device:
+        ctx.log("[!] No configs/gps.conf with a DEVICE line — gpsd left unbound. "
+                "The chrony side is in place; declare the receiver's "
+                "/dev/serial/by-id/... path and re-run this step. See "
+                "configs/gps.conf.sample and checklist section 14.", "warn")
+        return
+
+    if not Path(device).exists():
+        ctx.log(f"[!] configs/gps.conf names {device}, which is not present. "
+                f"Writing the gpsd config anyway — it will bind when the "
+                f"receiver is attached.", "warn")
+
+    # -n: gpsd must poll without a client. chrony reads shared memory and never
+    #     connects, so without this the segment stays empty and nothing errors.
+    # -b: read-only. gpsd's probe writes lock up some receivers -- they locked
+    #     up the BU-353N this was built against, which is exactly the case the
+    #     flag exists for. A provisioner cannot know what puck gets attached,
+    #     so the option that cannot break an unknown receiver is the default.
+    opts = "-n -b" + (f" -s {baud}" if baud else "")
+    backup = GPS_DEFAULTS_FILE + ".%s-backup" % PROJECT
+    if Path(GPS_DEFAULTS_FILE).is_file() and not Path(backup).is_file():
+        ctx.sudo("cp", GPS_DEFAULTS_FILE, backup)
+    ctx.sudo_write(GPS_DEFAULTS_FILE,
+                   'DEVICES="%s"\nGPSD_OPTIONS="%s"\nUSBAUTO="true"\n' % (device, opts))
+    ctx.log(f"[+] gpsd bound to {device} ({opts}).", "ok")
+
+    # gpsd.service is not enabled by default -- only gpsd.socket is, and socket
+    # activation starts gpsd when a CLIENT connects. chrony is not a client, so
+    # on a stock node gpsd never runs and the refclock never sees a sample.
+    ctx.sudo("systemctl", "enable", "gpsd.service", check=False)
+
+    # Order matters: chronyd owns the shared-memory segment, so restarting it
+    # invalidates the attachment gpsd holds. chrony first, gpsd second.
+    ctx.sudo("systemctl", "restart", "chrony", check=False)
+    ctx.sudo("systemctl", "restart", "gpsd.service", check=False)
+    ctx.log("[+] chrony restarted, then gpsd — in that order.", "ok")
+    ctx.log("[*] Acquisition takes roughly a minute from cold. Confirm with "
+            "`chronyc tracking` — Reference ID should read GPS0.", "info")
+
+
 def optional_direwolf(ctx: Ctx):
     with ctx.spin("Installing Direwolf...") as spin_result:
         status = ctx.sudo("apt", "install", "-y", "direwolf", check=False).returncode
@@ -3072,6 +3220,7 @@ COMPONENTS: list[Component] = [
     Component("dock_trigger",
               "Dock-trigger autostart (Havis dock only) — FUTURE FEATURE, unproven",
               step_dock_trigger),
+    Component("gps_time", "GPS time source (gpsd + chrony)", optional_gps_time),
     Component("direwolf", "Direwolf (AX.25 / APRS software TNC)", optional_direwolf),
     Component("meshtastic", "Meshtastic CLI (LoRa mesh node tooling)", optional_meshtastic),
     Component("dump1090", "dump1090 (ADS-B aircraft tracking, RTL-SDR)", optional_dump1090),
@@ -3366,6 +3515,45 @@ def verify_deployment(ctx: Ctx, selected_ids: set) -> list:
             "exercised against either; see 'Verifying it actually fires' in TESTING.md.")
 
     # --- optional installs ----------------------------------------------
+    if "gps_time" in selected_ids:
+        # Deliberately never opens the serial port. Opening it asserts DTR,
+        # which resets a BU-353N-class receiver and costs ~10 seconds of time
+        # source -- a check that knocks out the thing it is checking, and
+        # reports on a device it just restarted. Ask chronyd instead, which
+        # also has the advantage of proving the whole chain (gpsd reading the
+        # puck, samples reaching shared memory, chronyd consuming them) rather
+        # than just that a device node exists.
+        want(Path(GPS_CHRONY_DROPIN), "chrony GPS refclock configured", hard=False)
+
+        sources = subprocess.run(["chronyc", "-n", "sources"], stdin=subprocess.DEVNULL,
+                                 capture_output=True, text=True)
+        gps_line = ""
+        for line in sources.stdout.splitlines():
+            if "GPS0" in line:
+                gps_line = line.strip()
+                break
+        if sources.returncode != 0:
+            add("GPS time source active", "warn",
+                "could not query chronyd — is chrony running?")
+        elif not gps_line:
+            add("GPS time source active", "warn",
+                "chronyd is not carrying a GPS0 refclock; the drop-in may not "
+                "have been read — restart chrony, then gpsd, in that order")
+        else:
+            # Field 3 of a chronyc sources row is the reach register, octal.
+            fields = gps_line.split()
+            reach = fields[3] if len(fields) > 3 else "0"
+            if reach != "0":
+                add("GPS time source active", "pass",
+                    "chronyd has GPS0 with samples (reach %s) — %s" % (reach, gps_line))
+            else:
+                # Not a failure: most provisioning runs have no receiver
+                # attached, and a cold receiver needs about a minute.
+                add("GPS time source active", "warn",
+                    "GPS0 configured but no samples yet (reach 0). Expected with "
+                    "no receiver attached, or within the first minute after a "
+                    "cold start. Re-check with `chronyc tracking`.")
+
     if "direwolf" in selected_ids:
         dw = shutil.which("direwolf")
         add("Direwolf installed", "pass" if dw else "fail",

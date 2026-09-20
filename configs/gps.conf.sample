@@ -1,0 +1,36 @@
+# EmComm GPS receiver binding — copy to configs/gps.conf and edit.
+#
+# Per-unit hardware, so configs/gps.conf is gitignored: a by-id path carries
+# the receiver's serial number, which is machine data and must not land in the
+# repository. This .sample ships; your real file does not — configs/*.conf is
+# already gitignored here, as everything in configs/ is.
+#
+# DEVICE
+#   Use a /dev/serial/by-id/ path, NOT /dev/ttyUSB0. Device numbering moves
+#   the moment another serial device is attached — a radio CAT interface will
+#   take ttyUSB0 out from under the GPS. The by-id path is keyed on vendor,
+#   product and serial number, so it survives that.
+#
+#   Find it with the receiver attached:
+#       ls -l /dev/serial/by-id/
+#
+#   Note: a by-id entry only exists if the device reports a serial number.
+#   Most do; some cheap adapters do not, and those have no stable path at all.
+#
+# BAUD
+#   Optional. Omit it and gpsd hunts for the speed, which can take longer than
+#   it is willing to wait on a slow receiver. Set it if you know it — most
+#   NMEA pucks are 4800 or 9600.
+#
+# The provisioner never probes for a receiver. Opening a serial port asserts
+# DTR and some CAT interfaces key PTT on DTR or RTS, so a sweep of ttyUSB*
+# looking for a GPS could put a radio on the air. You name the device; the
+# provisioner touches nothing else.
+#
+# Verified example — GlobalSat BU-353N, NMEA 4800 8N1:
+#
+# DEVICE=/dev/serial/by-id/usb-Prolific_Technology_Inc._USB-Serial_Controller_EXAMPLE0000-if00-port0
+# BAUD=4800
+
+DEVICE=
+BAUD=
