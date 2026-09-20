@@ -156,3 +156,71 @@ Before the node counts as ready, exercise it end to end:
     - confirm maps render offline with the network cable pulled
     - confirm the document server answers at http://127.0.0.1:8085
     - run the machine on battery for the duration of an expected shift
+
+## 14. GPS Time Source (gpsd + chrony)
+Without this a node's only time sources are internet NTP pools it cannot reach
+in the field. It never synchronises, `chronyc tracking` reports
+`Not synchronised` indefinitely, and nothing reports an error. JS8Call feels it
+first — its timed transmit windows want the clock inside about a second, and a
+node that has been off for a week can be far enough out to hear nothing and be
+heard by nobody, with silence as the only symptom.
+
+Verified end to end on the sibling project's command node with a GlobalSat
+BU-353N: cold boot, no network, GPS selected at stratum 1 within about a
+minute. Not yet run on an EmComm node.
+
+**Naming the receiver.** Copy `configs/gps.conf.sample` to `configs/gps.conf`
+and set `DEVICE` to a by-id path:
+
+    ls -l /dev/serial/by-id/          # with the receiver attached
+
+Use by-id, not `/dev/ttyUSB0` — numbering moves as soon as a radio interface
+is attached. `BAUD` is optional but worth setting when known; gpsd will
+otherwise hunt for the speed, and on the receiver this was built against it
+failed to find 4800 within fifteen seconds.
+
+**The provisioner never probes for a receiver.** Opening a serial port asserts
+DTR, and some CAT interfaces key PTT on DTR or RTS, so sweeping `ttyUSB*`
+hunting for a GPS could put a radio on the air. You name the device.
+
+**Four things that each break this silently**, all handled by the step but
+worth knowing if you configure a node by hand:
+    - `gpsd.service` is not enabled on a stock node; only `gpsd.socket` is,
+      and socket activation starts gpsd when a *client* connects. chrony reads
+      shared memory and never connects, so gpsd never runs.
+    - `-n`, or gpsd does not poll until a client connects. Same outcome.
+    - `-b`, or gpsd probes the device by *writing* to it. That locked up a
+      BU-353N completely: port open, correct speed, zero bytes.
+    - `prefer` on the refclock, or chronyd keeps steering from an
+      **unreachable** NTP server for hours after the network drops, because a
+      stale source's dispersion grows at only ~1 ppm.
+
+chrony is restarted before gpsd, because chronyd owns the shared-memory
+segment gpsd attaches to.
+
+**Confirming it:**
+
+    chronyc tracking | grep -E 'Reference ID|Stratum|Leap'
+
+Expect `Reference ID : … (GPS0)`, `Stratum : 1`, `Leap status : Normal`.
+Acquisition takes roughly a minute from cold; before that `chronyc sources`
+shows `GPS0` with reach `0`, which is normal rather than a fault.
+
+**A USB puck may reset when the port closes.** The BU-353N restarts when DTR
+drops and needs ~10 seconds to resume. Anything that opens and closes the port
+costs the node ten seconds of time source — which is why the verification row
+asks chronyd rather than opening the device.
+
+## 15. Hardware
+A recommended and tested hardware list ships with the release, covering
+everything except radios. Two things about it:
+
+**Tested means tested.** An entry on that list has been run on a node. Anything
+present but unproven is named as such rather than implied to work.
+
+**The DigiRig audio/PTT interface is NOT among the tested items.** Direwolf's
+config ships with `ADEVICE plughw:1,0` and `PTT CM108` as placeholders, both
+flagged in the file itself, and CM108-style PTT over `/dev/hidraw*` has
+documented reliability problems on Linux. Nothing in this repository has keyed
+a radio. Watch the radio key before relying on the station to transmit — see
+section 8 and the Direwolf chapter of the operator's manual.
