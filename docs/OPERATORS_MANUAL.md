@@ -1,6 +1,8 @@
 # EmComm Field Node — Operator's Manual
 
-**Draft.** For node software version 1.0.2.
+**Draft.** Describes the provisioner on `main`. The last tagged release is **1.0.2**;
+`main` carries the GPS time source (Chapter 4) on top of it, which is not in that
+release. Where the two differ, this manual follows `main` and says so.
 
 ---
 
@@ -68,7 +70,7 @@ is a manual that stops working when it is printed in black and white.
 ## Status — what is proven and what is not
 
 An operator manual that claims more than the software has demonstrated is worse than no
-manual. This is the honest position as of version 1.0.2.
+manual. This is the honest position for the provisioner as it stands on `main`.
 
 ### Proven on hardware
 
@@ -96,7 +98,7 @@ Installed and configured, but never confirmed working end to end. Treat these as
 | **Direwolf PTT** | `PTT CM108` is a starting guess. CM108-style PTT over `/dev/hidraw*` has documented reliability problems on Linux |
 | **Direwolf audio device** | `ADEVICE plughw:1,0` is a placeholder and is very likely wrong for your interface |
 | **JS8Call operation** | no station profile ships; nothing has been keyed on-air from a provisioned node |
-| **Time synchronisation offline** | `chrony` is installed and running but has no offline time source configured. See Chapter 4 |
+| **GPS time source, on an EmComm node** | proven on the sibling project's command node — cold boot, no network, stratum 1 in about a minute, twice. The EmComm step is a hand-port of that one and has not been run on an EmComm node. See Chapter 4 |
 | **SatDump TLE retention** | the setting that stops SatDump overwriting a curated element set is newly changed and unverified on a node |
 
 If you confirm one of these on your own hardware, that is worth recording — the project
@@ -123,15 +125,25 @@ Two directories hold everything that is yours.
         SatDump/         built from source
         mesh_to_gpx.py   the mesh-to-GPX bridge
 
-Two more locations matter:
+Three more locations matter:
 
 * `/etc/emcomm/node.conf` — the node's identity, written at provisioning. It records the
   node ID you entered and which optional features were enabled.
 * `~/.config/` — per-application settings, in each application's usual place. The
   provisioner writes some of these; most you will set yourself.
+* `/etc/` — a few system files the provisioner owns, and does not expect you to
+  edit: the RTL-SDR blacklist (Chapter 5) and, if you selected the GPS step, the
+  chrony refclock and `gpsd` binding (Chapter 4).
 
-**Back up `~/EMCOMM_Data/` and `~/.config/`.** Everything else can be rebuilt by
-re-running the provisioner; those two cannot.
+One thing does **not** live on the node: `configs/` is part of the provisioner's own
+directory, not of the finished node. It is where you put the profiles and the GPS
+binding that a run consumes.
+
+**Back up `~/EMCOMM_Data/`, `~/.config/`, and the provisioner's `configs/`.**
+Everything else can be rebuilt by re-running the provisioner; those cannot. `configs/`
+is on the list because it is gitignored by design — it holds your callsign, your
+profiles and your receiver's serial number, so a fresh clone comes back without it and
+a re-run then quietly provisions less than the last one did.
 
 ## Chapter 2 — First power-on
 
@@ -188,11 +200,11 @@ restart needed.
 
 **Read this before relying on any timed mode.**
 
-`gpsd` and `chrony` are both installed and enabled. What is **not** configured is the
-link between them, and that matters more than it sounds.
+A field node's clock is a problem the moment it goes offline, and it is a problem that
+announces itself as something else entirely.
 
-Offline, `chrony`'s only configured time sources are internet NTP pools it cannot reach.
-With no reachable source it never synchronises:
+`chrony`'s stock configuration lists internet NTP pools. A deployed node cannot reach
+them, so it never synchronises, and it says so only if you ask:
 
     $ chronyc tracking
     Leap status     : Not synchronised
@@ -201,19 +213,138 @@ The clock still runs — it is whatever the hardware clock said at boot, driftin
 whatever rate that clock drifts. For most of what this node does, that is fine.
 
 **It is not fine for JS8Call.** JS8Call and similar weak-signal modes transmit and
-receive in timed windows, and expect the clock to be right within about a second. A node
+receive in timed windows and expect the clock to be right within about a second. A node
 that has been powered off for a week and comes up offline can easily be far enough out
 that it hears nothing and nobody hears it — with no error message, because nothing is
 broken. **If JS8Call decodes nothing, check the clock before you check the antenna.**
 
-Until a GPS time source is configured, the practical workarounds are:
+The fix is a GPS receiver. GPS carries time, not just position, and it carries it
+without a network.
+
+### What the provisioner does
+
+Select **GPS time source (gpsd + chrony)** on the options screen. The step writes two
+files and restarts two services:
+
+| File | What it holds |
+|---|---|
+| `/etc/chrony/conf.d/10-emcomm-gps.conf` | a `refclock SHM 0 refid GPS0 … prefer` line, telling chrony to take time from `gpsd`'s shared-memory segment |
+| `/etc/default/gpsd` | binds `gpsd` to the receiver you named, with `-n -b` and the baud rate if you set one |
+
+It then enables `gpsd.service`, restarts `chrony`, and restarts `gpsd` — **in that
+order**, because `chronyd` creates the shared-memory segment while it is still root and
+`gpsd` attaches to it afterwards. Restarting chrony second would invalidate an
+attachment gpsd already holds.
+
+The existing `/etc/default/gpsd` is backed up to `/etc/default/gpsd.emcomm-backup`
+before it is replaced, once — a re-run will not overwrite the backup.
+
+### Your one job: name the receiver
+
+The provisioner will not go looking for a GPS. Copy the sample and fill in one line:
+
+    cp configs/gps.conf.sample configs/gps.conf
+    ls -l /dev/serial/by-id/          # with the receiver attached
+    # put that path in DEVICE=, and the speed in BAUD= if you know it
+
+Two things about that, both of which have bitten:
+
+**Use the `/dev/serial/by-id/` path, not `/dev/ttyUSB0`.** Device numbering moves the
+instant another serial device is attached — plug in a radio CAT interface and it can
+take `ttyUSB0` out from under the GPS. The by-id path is keyed on vendor, product and
+serial number and survives that. (A by-id entry exists only if the device reports a
+serial number. Most do.)
+
+**`BAUD` is optional but worth setting.** Without it gpsd hunts for the speed, and on
+the receiver this was built against it did not find 4800 inside the fifteen seconds it
+was willing to spend. Most NMEA pucks are 4800 or 9600.
+
+> **The provisioner never probes for a receiver, and neither should you.** Opening a
+> serial port asserts DTR, and some CAT interfaces key PTT on DTR or RTS — a sweep of
+> `ttyUSB*` hunting for a GPS could put a radio on the air. You name the device; the
+> provisioner touches nothing else.
+
+`configs/gps.conf` is gitignored, because a by-id path carries the receiver's serial
+number and that is machine data. The `.sample` ships; your real file does not.
+
+### Confirming it
+
+Give it about a minute from cold, then:
+
+    chronyc tracking | grep -E 'Reference ID|Stratum|Leap'
+
+What you want:
+
+    Reference ID    : 47505330 (GPS0)
+    Stratum         : 1
+    Leap status     : Normal
+
+`Stratum : 1` is the whole point — the node is now its own time authority and needs
+nothing upstream. Pull the network cable and it stays that way.
+
+Before acquisition, `chronyc sources` shows `GPS0` with reach `0`. That is normal for
+the first minute, not a fault. The verification screen says the same thing: a `GPS time
+source active` row that **warns** at reach 0 rather than failing, because most
+provisioning runs happen with no receiver attached at all.
+
+> **Do not "test" the receiver by opening its serial port.** A USB puck typically resets
+> when DTR drops, and the one this was built against needs about ten seconds to resume.
+> Anything that opens and closes the port costs the node ten seconds of time source and
+> then reports on a device it just restarted. Ask `chronyd` instead — `chronyc sources`
+> proves the whole chain anyway: gpsd reading the puck, samples reaching shared memory,
+> chronyd consuming them.
+
+### When it does not work
+
+Four things break this silently — each one leaves a node that looks configured, logs no
+error, and never synchronises. The provisioner handles all four; they are listed because
+a hand-configured node, or one someone has since edited, can lose any of them.
+
+| Symptom | Cause |
+|---|---|
+| `gpsd` not running at all | `gpsd.service` is not enabled on a stock node — only `gpsd.socket` is, and socket activation starts gpsd when a *client* connects. chrony reads shared memory and never connects, so gpsd never starts |
+| gpsd running, no samples | missing `-n`. Without it gpsd does not poll the receiver until a client connects. Same outcome, different cause |
+| port open, correct speed, zero bytes | missing `-b`. gpsd's device probe *writes* to the receiver; that locked up the puck this was built against completely |
+| GPS healthy but chrony ignores it | missing `prefer` on the refclock. chronyd will keep steering from an **unreachable** NTP server for hours after the network drops, because a stale source's dispersion grows at only about 1 ppm. Observed on a node: a server at reach `0`, last heard from 190 seconds earlier, still selected over a live GPS at reach `377` |
+
+Useful commands, in escalating order of intrusiveness:
+
+    chronyc sources                    # is GPS0 there, and what is its reach?
+    systemctl status gpsd.service      # is gpsd actually running?
+    sudo ntpshmmon -n 3                # are samples reaching shared memory? (needs root)
+    sudo journalctl -u gpsd -n 50      # what did gpsd make of the device?
+
+`ntpshmmon` without `sudo` reports a permission error rather than an empty result — that
+is the tool, not the receiver.
+
+If two things declare `refclock SHM 0`, they fight over one segment. The provisioner
+checks for that and warns; if you have hand-edited `/etc/chrony/chrony.conf` or dropped
+another file in `conf.d/`, that is the first place to look.
+
+### If you have no GPS receiver
+
+The step is optional and the node works without it. Until you have one:
 
 * set the clock by hand from any known-good source before you need timed modes
-* if the node sees a network at any point, let it sync then and power-cycle as little as
-  possible afterwards
+* if the node sees a network at any point, let it sync then, and power-cycle as little
+  as possible afterwards
 
-**Status: Unproven / not yet configured.** A GPS receiver feeding `chrony` through
-`gpsd` is the intended fix and is not in this version.
+### Position
+
+`gpsd-clients` is installed, so with a receiver bound you can read position directly:
+
+    cgps -s                            # live position, satellites, fix quality
+    gpsmon                             # raw NMEA, for when you doubt the receiver
+
+Be aware that **nothing else on the node consumes that position.** QMapShack does not
+read gpsd (Chapter 12), and the mesh-to-GPX bridge takes peer positions from the
+Meshtastic node database rather than from a local receiver (Chapter 11). The GPS is
+there for time and for your own readout; it does not move a cursor on the map.
+
+**Status: Proven on the sibling project's command node** — a GlobalSat BU-353N, cold
+boot with no network reachable, `GPS0` selected at stratum 1 within about a minute, run
+twice to be sure. The EmComm step is a hand-port of that one and has **not yet been run
+on an EmComm node**. Checklist section 14 carries the same caveat.
 
 ## Chapter 5 — The RTL-SDR dongle: one radio, three programs
 
@@ -721,7 +852,10 @@ station to come up.
 method is a guess with known reliability problems on Linux. See Chapter 9. **Watch the
 radio key before you rely on this.**
 
-**The node has no offline time source.** See Chapter 4. This matters most for JS8Call.
+**Offline time depends on hardware you supply.** A node with no GPS receiver has no
+reachable time source and never synchronises — silently. The GPS step fixes it, but
+only once you have a receiver and have named it in `configs/gps.conf`. See Chapter 4.
+This matters most for JS8Call.
 
 **Verification checks files, not behaviour.** See Chapter 18.
 
@@ -742,7 +876,11 @@ conditions and the rules that apply to you are outside this manual entirely.
     # then browse to http://127.0.0.1:8085
 
     # time
-    chronyc tracking
+    chronyc tracking                   # Reference ID, Stratum, Leap status
+    chronyc sources                    # is GPS0 there, and what is its reach?
+    systemctl status gpsd.service      # is gpsd actually running?
+    sudo ntpshmmon -n 3                # samples reaching shared memory (needs root)
+    cgps -s                            # live position and fix quality
 
     # SDR dongle
     rtl_test -t
@@ -776,12 +914,15 @@ Work down this list before deeper troubleshooting. Most faults are one of these.
 4. **Meshtastic will not pick a port** → more than one serial device attached; name it
    with `--port` (Chapter 10).
 5. **JS8Call decodes nothing** → check the clock before the antenna (Chapter 4).
-6. **Direwolf hears nothing, or does not key** → `ADEVICE` and `PTT` are placeholders
+6. **`chronyc tracking` says `Not synchronised` with a GPS attached** → check
+   `chronyc sources` for `GPS0`, then that `gpsd.service` is running. Reach `0` in
+   the first minute after a cold start is normal (Chapter 4).
+7. **Direwolf hears nothing, or does not key** → `ADEVICE` and `PTT` are placeholders
    (Chapter 9).
-7. **Mesh peers have not moved in ages** → QMapShack is showing a stale file; reload it
+8. **Mesh peers have not moved in ages** → QMapShack is showing a stale file; reload it
    (Chapter 12).
-8. **SatDump reports `0 TLEs loaded!`** → no orbital elements (Chapter 19).
-9. **A provisioning step failed** → re-run the provisioner with only that step selected
+9. **SatDump reports `0 TLEs loaded!`** → no orbital elements (Chapter 19).
+10. **A provisioning step failed** → re-run the provisioner with only that step selected
    (Chapter 17).
 
 ---
@@ -798,13 +939,27 @@ No chapter has been followed start to finish on a provisioned machine with the h
 attached. Paths, unit names and commands were read out of the provisioner and are
 correct; the *procedures* around them are reasoned, not rehearsed.
 
+Chapter 4 is the nearest thing to an exception: its procedure was worked out on real
+hardware, but on the sibling project's node rather than an EmComm one.
+
+### Kept in step with `main`
+
+The manual tracks the provisioner, and the provisioner keeps moving. A change that
+adds a step, renames a unit or moves a path invalidates a chapter, and a stale manual
+is worse than a thin one. Revised so far:
+
+| Landed on `main` | What it changed here |
+|---|---|
+| GPS time source (PR #54) | Chapter 4 rewritten from "not in this version" to a procedure; Chapter 1 gained the `/etc/` and `configs/` notes; Chapter 20, Appendix A and Appendix B updated; the Unproven table's time row restated |
+
 ### Chapters most likely to be wrong
 
-Four tools are described from outside — installed and launched, but never operated from a
-provisioned node by anyone who wrote this:
+Five chapters are written from outside — the software was installed and launched, but
+never operated from a provisioned EmComm node by anyone who wrote this:
 
 | Chapter | What needs an operator's eye |
 |---|---|
+| 4 — Time and position | the procedure is proven, but on the **sibling project's** node. Needs one run on an EmComm node to move from ported to confirmed |
 | 6 — JS8Call | first-run setup order, and what a working audio configuration looks like |
 | 7 — ion2G | how a channel plan is actually loaded, and what running ALE looks like |
 | 8 — QLog | first-run fields, and where a Flatpak export really lands |

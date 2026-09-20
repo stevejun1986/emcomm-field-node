@@ -45,11 +45,17 @@ def inline(text):
     reportlab accepts a small XML subset; anything unescaped that looks like a
     tag will either vanish or abort the build, so escape first and add markup
     after.
+
+    Code spans go first so that a `*` inside one -- alsa_output.* and plughw:
+    are the manual's regular offenders -- is already wrapped before the bold
+    pass sees it. The bold pattern is non-greedy rather than "no asterisks",
+    because the manual bolds phrases that contain code spans with asterisks
+    in them, and [^*]+ silently declines to match those.
     """
     text = html.escape(text, quote=False)
     text = re.sub(r"`([^`]+)`",
                   r'<font face="Courier" size="9">\1</font>', text)
-    text = re.sub(r"\*\*([^*]+)\*\*", r"<b>\1</b>", text)
+    text = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", text)
     # [label](url) -> label, then the bare url. A printed manual cannot be
     # clicked, so the address has to survive as text.
     text = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", r"\1 (\2)", text)
@@ -109,7 +115,11 @@ def flush_table(rows, st, story):
         while len(row) < ncols:
             row.append(Paragraph("", st["cell"]))
     avail = 6.5 * inch
-    t = Table(data, colWidths=[avail / ncols] * ncols, hAlign="LEFT")
+    # repeatRows: a table that splits across a page break otherwise continues
+    # with unlabelled columns, which for the failure tables means a page of
+    # causes with no symptoms beside them.
+    t = Table(data, colWidths=[avail / ncols] * ncols, hAlign="LEFT",
+              repeatRows=1)
     t.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#ececea")),
         ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#b8b8b4")),
@@ -121,6 +131,41 @@ def flush_table(rows, st, story):
     ]))
     story.append(t)
     story.append(Spacer(1, 9))
+
+
+def starts_block(raw):
+    """True if this raw line opens a new block rather than continuing one.
+
+    The manual is hard-wrapped, so a paragraph, a bullet or a numbered item
+    routinely spans several source lines. Rendering one Paragraph per source
+    line breaks any span that crosses a line end -- **bold** written across a
+    wrap came out as literal asterisks in the PDF -- and puts a paragraph gap
+    between the halves of a sentence. Lines are gathered until one of these
+    says a new block has begun.
+    """
+    s = raw.strip()
+    if not s:
+        return True
+    if raw.startswith("    "):             # indented code, handled upstream
+        return True
+    if s.startswith(("```", "|", ">", "#")):
+        return True
+    if s == "---":
+        return True
+    return bool(re.match(r"^[*-] ", s) or re.match(r"^\d+\. ", s))
+
+
+def gather(lines, i):
+    """Consume a wrapped block from line i. Returns (joined text, next index).
+
+    i must already point at the block's first line; its leading marker (bullet
+    or number) is the caller's to strip.
+    """
+    parts, i = [lines[i].strip()], i + 1
+    while i < len(lines) and not starts_block(lines[i]):
+        parts.append(lines[i].strip())
+        i += 1
+    return " ".join(parts), i
 
 
 def next_is_heading(lines, i):
@@ -208,12 +253,18 @@ def render(md, st):
             story.append(Paragraph(inline(" ".join(q for q in quote if q)), st["quote"]))
             continue
         elif re.match(r"^[*-] ", s):
-            story.append(Paragraph(inline(s[2:]), st["bullet"], bulletText="•"))
+            text, i = gather(lines, i)
+            story.append(Paragraph(inline(text[2:]), st["bullet"], bulletText="•"))
+            continue
         elif re.match(r"^\d+\. ", s):
-            n, rest = s.split(". ", 1)
+            text, i = gather(lines, i)
+            n, rest = text.split(". ", 1)
             story.append(Paragraph(inline(rest), st["bullet"], bulletText=n + "."))
+            continue
         else:
-            story.append(Paragraph(inline(s), st["body"]))
+            text, i = gather(lines, i)
+            story.append(Paragraph(inline(text), st["body"]))
+            continue
         i += 1
 
     if table:
