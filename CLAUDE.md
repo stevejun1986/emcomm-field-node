@@ -18,6 +18,31 @@ Use `claude/<short-description>` for branch names. One PR per coherent change �
 a fix and an unrelated cleanup are two pull requests, because they are two review
 decisions.
 
+**That rule runs both ways, and the other direction is the one that gets missed.
+Related changes to one subsystem ship together, not one PR per instruction.**
+
+A behaviour change and the documentation it creates or invalidates belong in the
+same PR. So does the verification row that checks the behaviour, the checklist
+entry the operator now needs, and the sample config the change requires. If
+landing the code leaves the repository describing something that is no longer
+true — even for an hour — the pieces were not separable.
+
+This matters because the history is the provenance record for software people
+take into the field. A sequence of small reactive PRs reads as firefighting; one
+PR reads as a considered change. Same diff, different story about how it was
+built.
+
+The rule bites hardest when work arrives as a sequence of requests. Each one in
+isolation looks like its own PR; together they are one change. **Recognising that
+is the agent's job, not the owner's** — say "these are one change, I will land
+them together" rather than executing each request separately and leaving the
+owner to notice afterwards.
+
+Worked example: the GPS time source landed as a single PR carrying the
+provisioning step, the verification row, the checklist section, the sample config
+and the `configs/README.md` entry. Splitting those would have meant a merged
+provisioner whose checklist did not yet mention the step it had just added.
+
 State what you did **not** verify as clearly as what you did. Nothing here can be
 exercised end to end without a VM and, for the dock automation, the physical
 hardware — so "tests pass" and "this works" are different claims and should not
