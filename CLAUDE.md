@@ -153,8 +153,8 @@ Shipped profiles use substitution tokens, filled in at provisioning time:
 `configs/` and `docs/` ship **empty on purpose**. Each group runs its own
 frequencies, its own operating area and its own document set, and a profile
 captured from a working install carries that operator's callsign, grid square,
-absolute home path and audio device names. The sibling repository had to be
-rewritten with `git filter-repo` to remove exactly that. Do not repeat it.
+absolute home path and audio device names. A repository built this way had to
+be rewritten with `git filter-repo` to remove exactly that. Do not repeat it.
 
 Before committing anything under `configs/`: no real callsign, no grid square
 (`MyGrid=` stays empty), no `alsa_output.*` device names, no absolute `/home/...`
@@ -335,16 +335,25 @@ last moment the mistake is still cheap.
 
 ---
 
-## Relationship to the S.T.N.D. repository
+## Where this code came from
 
-This provisioner began as a public/EM adaptation of a separate private repository
-and shares **no code** with it. Fixes have been ported by hand in one direction
-(the five-screen flow, post-deployment verification, the hostname step, the
-`os.getlogin()` crash). They do not flow automatically and the two will drift.
+This provisioner began as an emergency-communications adaptation of a separate
+private repository and shares **no code** with it. Fixes have been ported by hand
+in one direction (the five-screen flow, post-deployment verification, the hostname
+step, the `os.getlogin()` crash). They do not flow automatically and the two will
+drift.
 
 If you are told a fix exists "in the other repo", it is not in this one until
-someone ports it. There are no distribution branches here — unlike the sibling
-repository, `main` is the only branch and the clone is what people run.
+someone ports it. There are no distribution branches here: `main` is the only
+branch and the clone is what people run.
+
+**Name neither that repository nor its project, anywhere in this one.** Not in
+code comments, not in documentation, not in issue or commit text. The two are
+developed in parallel because the workflows are alike; that is the whole of the
+relationship, and this repository is going public while the other is not. Where a
+fact was established on the other project's hardware and the provenance matters,
+state it abstractly — "on a separate node running the hand-ported equivalent of
+this step" — and never link to an issue or a branch that a reader cannot open.
 
 ---
 

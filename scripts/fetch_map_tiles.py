@@ -53,9 +53,8 @@ from pathlib import Path
 
 # name -> (url template, description)
 # basemap.nationalmap.gov is case-sensitive on the /ArcGIS/ path segment.
-# The S.T.N.D. fetcher carries this as a hard-won note from a real run; this
-# script had it lowercase, which would fail every request before throttling
-# ever became the question.
+# Learned from a real run: this script had it lowercase, which would fail
+# every request before throttling ever became the question.
 SOURCES = {
     "topo": (
         "https://basemap.nationalmap.gov/ArcGIS/rest/services/USGSTopo/MapServer/tile/{z}/{y}/{x}",

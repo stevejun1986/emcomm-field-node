@@ -83,7 +83,7 @@ for code, expect in ((404, "missing"), (429, "throttled"), (503, "throttled"), (
     assert got == expect, (code, got, expect)
 print("OK: every status maps to a distinct outcome, not a single 'fail'")
 
-# --- URL casing, per the note carried in the S.T.N.D. fetcher ----------
+# --- URL casing, per the note carried in the fetcher -------------------
 for name, (url, _desc) in f.SOURCES.items():
     assert "/ArcGIS/rest" in url, (name, url)
     assert "/arcgis/" not in url, (name, url)
