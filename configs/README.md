@@ -14,6 +14,7 @@ real profiles in a private location; commit nothing here you would not publish.
 | `QMapShack.conf` | App profiles step | QMapShack settings profile |
 | `analog_channels.csv` | App profiles step | CHIRP channel list for analog radios |
 | `ale_channels.zcp` | App profiles step | ion2G HF ALE channel plan |
+| `gps.conf` | GPS time step | Names the GPS receiver — **the provisioner never probes for one**, see below |
 | `satdump_tles.txt` | SatDump step | Curated TLE set — **supplying one changes behavior**, see below |
 | `areas/*.json` | Map tile step | Bounding box for an operating area |
 
@@ -170,3 +171,25 @@ read as a live area, which is what makes "copy it" the only workflow that works.
 
 Do not commit your group's real area unless you are content for it to be public;
 `.gitignore` keeps `areas/*.json` out of the repository for that reason.
+
+---
+
+## `gps.conf` — naming the GPS receiver
+
+Copy `gps.conf.sample` and fill in `DEVICE`. Without it the GPS time step still
+writes chrony's side, which is harmless on a node with no receiver, but gpsd is
+left unbound and the node has no offline time source.
+
+Use a `/dev/serial/by-id/` path rather than `/dev/ttyUSB0`:
+
+    ls -l /dev/serial/by-id/          # with the receiver attached
+
+Device numbering moves as soon as another serial device is attached — a radio
+interface will take `ttyUSB0` out from under the GPS. The by-id path is keyed
+on vendor, product and serial number, so it survives that. It only exists if
+the device reports a serial number; most do, some cheap adapters do not.
+
+**The provisioner will not go looking for a receiver, and that is deliberate.**
+Opening a serial port asserts DTR, and some CAT interfaces key PTT on DTR or
+RTS — a sweep of `ttyUSB*` hunting for a GPS could put a radio on the air. You
+name the device; the provisioner touches nothing else.
