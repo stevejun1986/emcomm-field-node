@@ -588,7 +588,8 @@ tiles stored on the disk, with no network.
 
 **What the provisioner did.** Installed QMapShack, fetched map tiles for the operating
 area defined in `configs/areas/<your-area>.json`, and staged a settings profile if your
-group supplied one. Tiles land in `~/EMCOMM_Data/Offline_Maps/`.
+group supplied one. Tiles land in `~/EMCOMM_Data/Offline_Maps/`. It also pointed the
+first view at your area and set the grid — see below.
 
 **Starting it.** Desktop shortcut, or:
 
@@ -616,11 +617,54 @@ concluding the mesh is quiet — a stationary node and a stale file look identic
 
 **Status: Proven** — mesh peers imported and drawn from a bridge-generated GPX.
 
+### Where the settings live
+
+    ~/.config/QLandkarte/QMapShack.conf
+
+**Not `QLandkarteGT`.** That is the predecessor project, and earlier versions of this
+provisioner staged there — a directory QMapShack never opens. If your node has one, it
+has never been in effect. Move anything you customised across by hand; the provisioner
+will not do it for you, because a stale profile would overwrite a good one.
+
+QMapShack rewrites this file every time it closes. Anything you set by hand while it is
+running is lost on exit, so change settings in the application, not in the file.
+
+### The first view, and the grid
+
+QMapShack's built-in default view is 12°E 49°N — central Europe. On a node provisioned
+for anywhere else the first launch therefore opens on blank canvas, and the obvious move
+— pan and zoom until you find your area — is the slow one, because every step asks the
+map source for tiles that do not exist.
+
+The provisioner seeds the view instead: centred on your operating area, at zoom 12, with
+a grid set to your area's UTM zone. It only seeds. Once you have moved the view and
+closed the application, your position is the saved one and the provisioner leaves it
+alone on later runs.
+
+**The grid is UTM, not USNG.** QMapShack has no US National Grid or MGRS support — its
+grid takes a projection, not a grid system. UTM is what USNG is built on, so the lines
+fall exactly where USNG's do; the labels read as metres within the zone rather than as
+USNG 100 km square letters. A position is transcribable to USNG but not readable as one
+off the screen. If you need true USNG strings, convert them — the map will not do it.
+
+The basemap is USGS Topo, which is the ICS reference basemap already.
+
 ### If the map is blank
 
 A blank map with warnings about empty filenames usually means a tile source is pointing
 at a directory with no tiles in it — not that the file you loaded is wrong. Check that
 `~/EMCOMM_Data/Offline_Maps/` actually contains tiles for the area you are looking at.
+
+Check where you are looking, too. Tiles cover your operating area and nothing else, so
+a view over open ocean is blank for the same reason an empty directory is — and the two
+look identical. If the map is blank right after a fresh provisioning run, confirm the
+view is on your area before concluding the tiles are missing.
+
+**If panning is heavy on the CPU**, look at the map sources in
+`~/EMCOMM_Data/Offline_Maps/*.tms`. A source that carries a `<Script>` block is from an
+older provisioning run: QMapShack starts a JavaScript engine for every tile it draws
+through one. A current `.tms` uses `<ServerUrl>` and declares the zoom range on disk.
+Re-running the config step replaces it.
 
 ## Chapter 13 — Kiwix: the offline knowledgebase
 
@@ -964,6 +1008,7 @@ is worse than a thin one. Revised so far:
 | Landed on `main` | What it changed here |
 |---|---|
 | GPS time source (PR #54) | Chapter 4 rewritten from "not in this version" to a procedure; Chapter 1 gained the `/etc/` and `configs/` notes; Chapter 20, Appendix A and Appendix B updated; the Unproven table's time row restated |
+| Offline map fixes (PR #56) | Chapter 12 gained where the settings actually live, the seeded first view, the UTM-not-USNG grid, and what a slow pan means. **Open while that PR is unmerged** — until it lands, a node still stages to `QLandkarteGT` and opens on Europe |
 
 ### Chapters most likely to be wrong
 
