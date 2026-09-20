@@ -93,6 +93,7 @@ import getpass
 import hashlib
 import importlib.util
 import json
+import math
 import os
 import platform
 import queue
@@ -100,6 +101,7 @@ import re
 import shutil
 import signal
 import stat
+import struct
 import subprocess
 import sys
 import tempfile
@@ -276,6 +278,205 @@ MAP_LAYERS = (
     ("topo",    "Topo_Offline.tms",      "Topographic (Offline)"),
     ("imagery", "Satellite_Offline.tms", "Satellite Imagery (Offline)"),
 )
+
+# ---------------------------------------------------------------------------
+# QMapShack settings
+#
+# QMapShack stores its settings through QSettings, which on Linux is an INI
+# file under the organisation name the application sets. QMapShack's main.cpp
+# sets that to "QLandkarte", so the file is:
+#
+#     ~/.config/QLandkarte/QMapShack.conf
+#
+# NOT QLandkarteGT. That was the predecessor project, and a profile staged
+# there is read by nothing -- which is how this provisioner registered its
+# offline maps into a directory QMapShack never opens, while a verification
+# row confirmed the file was present.
+# ---------------------------------------------------------------------------
+QMS_CONF_REL = Path(".config") / "QLandkarte" / "QMapShack.conf"
+QMS_CONF_LEGACY_REL = Path(".config") / "QLandkarteGT" / "QMapShack.conf"
+
+# QMapShack keys its saved views by a generated "key_<md5>" that cannot be
+# predicted from here. It also carries a backward-compatibility path: a view
+# group whose name does NOT start with "key_" is taken as a legacy canvas
+# name, and that group's settings are loaded (CCanvas.cpp, storedKey branch).
+# Seeding under a plain name is therefore stable across versions.
+QMS_VIEW_GROUP = "View 1"
+
+# Square (tile-aligned) scales, which is the table that matches a slippy tile
+# pyramid: index i has MPIXEL / 2**(20 - i) metres per pixel, so
+# zoomIndex = 20 - slippy_zoom over the 17 levels it defines (z4..z20).
+QMS_SCALES_SQUARE = 1
+QMS_ZOOM_BASE = 20
+QMS_DEFAULT_VIEW_ZOOM = 12      # orientation level; the fetcher always has it
+
+
+def _qt_ini_escape(raw: bytes) -> tuple:
+    """Qt's QSettings INI escaping. Returns (escaped, needs_quotes).
+
+    Reimplemented rather than shelled out to because a node has no Qt Python
+    bindings. Verified against Qt's own reader over 3,005 coordinates spanning
+    the poles, the antimeridian and the byte patterns that force quoting.
+    """
+    simple = {0x07: r"\a", 0x08: r"\b", 0x0C: r"\f",
+              0x0A: r"\n", 0x0D: r"\r", 0x09: r"\t", 0x0B: r"\v"}
+    out, escape_next_if_digit, needs_quotes = [], False, False
+    for b in raw:
+        if b == 0x00:
+            out.append(r"\0")
+            escape_next_if_digit = True
+            continue
+        if b in simple:
+            out.append(simple[b])
+            escape_next_if_digit = False
+            continue
+        if b == 0x22:
+            out.append('\\"')
+            escape_next_if_digit = False
+            continue
+        if b == 0x5C:
+            out.append("\\\\")
+            escape_next_if_digit = False
+            continue
+        if b <= 0x1F or b >= 0x7F:
+            # Qt writes the hex unpadded and lowercase, which is exactly why
+            # it then escapes a following hex digit: "\xe" + "f" would
+            # otherwise read back as a single byte 0xef.
+            out.append("\\x%x" % b)
+            escape_next_if_digit = True
+            continue
+        ch = chr(b)
+        if ch in ";,=":
+            needs_quotes = True
+        if escape_next_if_digit and ch in "0123456789abcdefABCDEF":
+            out.append("\\x%x" % b)
+            escape_next_if_digit = True
+            continue
+        out.append(ch)
+        escape_next_if_digit = False
+    return "".join(out), needs_quotes
+
+
+def qsettings_qpointf(x: float, y: float) -> str:
+    """The exact INI text QSettings writes for QPointF(x, y).
+
+    Most of QMapShack's settings are plain text. The view centre is not: it is
+    a QPointF serialised as a binary QVariant, type id 26, two big-endian
+    doubles, escaped into the INI. There is no text form QMapShack will read
+    instead -- QVariant::toPointF() on a string yields (0, 0).
+    """
+    blob = b"@Variant(" + struct.pack(">Idd", 26, x, y) + b")"
+    escaped, needs_quotes = _qt_ini_escape(blob)
+    return '"%s"' % escaped if needs_quotes else escaped
+
+
+def utm_proj_for(lat: float, lon: float) -> str:
+    """A proj4 string for the UTM zone containing (lat, lon).
+
+    QMapShack has no MGRS or USNG support of any kind -- the strings appear
+    nowhere in its source, and its grid takes a proj4 projection. US National
+    Grid is MGRS on NAD83, so a UTM grid for the operating area's zone draws
+    the same lines USNG does; what it cannot do is label them with USNG's
+    100 km square letters. That is a QMapShack limitation, not a setting.
+    """
+    zone = min(60, max(1, int((lon + 180.0) / 6.0) + 1))
+    south = " +south" if lat < 0 else ""
+    return ("+proj=utm +zone=%d%s +datum=WGS84 +units=m +no_defs"
+            % (zone, south))
+
+
+def tile_zoom_range(layer_dir: Path) -> tuple:
+    """(min_z, max_z) actually present on disk, or None when nothing is.
+
+    A .tms that does not declare its range gets QMapShack's defaults of 1 and
+    21, so the canvas asks for zoom levels the fetcher never downloaded. Every
+    one of those is a miss that still costs a path lookup.
+    """
+    zooms = []
+    try:
+        for child in layer_dir.iterdir():
+            if child.is_dir() and child.name.isdigit():
+                zooms.append(int(child.name))
+    except OSError:
+        return None
+    return (min(zooms), max(zooms)) if zooms else None
+
+
+def _qms_text_value(s: str) -> str:
+    """A plain string as QSettings would write it into an INI."""
+    escaped, needs_quotes = _qt_ini_escape(s.encode("utf-8"))
+    return '"%s"' % escaped if needs_quotes else escaped
+
+
+def seed_qmapshack_view(conf: Path, lat: float, lon: float,
+                        zoom: int = QMS_DEFAULT_VIEW_ZOOM) -> str:
+    """Point QMapShack's first view at the operating area. Returns a status.
+
+    QMapShack's built-in default view is lon 12, lat 49 -- central Europe,
+    where a node provisioned for anywhere else has no tiles at all. The
+    operator's first launch therefore opens on blank canvas and they pan and
+    zoom across an ocean to reach their own area, and every step of that asks
+    the map source for tiles that do not exist.
+
+    Only ever seeds: if the view already carries a centre, that is the
+    operator's own saved position and it is left alone. QMapShack rewrites
+    this file when it exits, so this matters for the first launch and then
+    stops mattering, which is the intent.
+    """
+    prefix = "Views\\%s\\" % QMS_VIEW_GROUP
+    wanted = [
+        (prefix + "posFocus", qsettings_qpointf(math.radians(lon), math.radians(lat))),
+        (prefix + "map2\\zoomIndex", str(QMS_ZOOM_BASE - zoom)),
+        (prefix + "scales", str(QMS_SCALES_SQUARE)),
+        (prefix + "grid\\proj", _qms_text_value(utm_proj_for(lat, lon))),
+    ]
+
+    # surrogateescape, not "replace": this is Qt's file, and a byte this
+    # provisioner cannot decode must come back out unchanged rather than as a
+    # replacement character written over somebody's staged profile.
+    lines = (conf.read_text(errors="surrogateescape").splitlines()
+             if conf.is_file() else [])
+
+    # Hand-edited rather than run through configparser: this file is Qt's, not
+    # ours. configparser would rewrite every line it did not understand, and
+    # the keys here carry backslashes and the values carry Qt's own escaping.
+    if any(l.startswith(prefix + "posFocus=") for l in lines):
+        return "kept"
+
+    block = ["%s=%s" % (k, v) for k, v in wanted]
+    try:
+        start = lines.index("[Canvas]")
+    except ValueError:
+        if lines and lines[-1].strip():
+            lines.append("")
+        lines += ["[Canvas]"] + block
+    else:
+        end = len(lines)
+        for i in range(start + 1, len(lines)):
+            if lines[i].startswith("["):
+                end = i
+                break
+        lines[end:end] = block
+
+    conf.parent.mkdir(parents=True, exist_ok=True)
+    conf.write_text("\n".join(lines) + "\n", errors="surrogateescape")
+    return "seeded"
+
+
+def area_centre(spec: dict) -> tuple:
+    """(lat, lon) for an operating area given either way, or None."""
+    centre = spec.get("center") or {}
+    if centre.get("lat") is not None and centre.get("lon") is not None:
+        try:
+            return float(centre["lat"]), float(centre["lon"])
+        except (TypeError, ValueError):
+            return None
+    try:
+        box = {k: float(spec[k]) for k in ("north", "south", "east", "west")}
+    except (KeyError, TypeError, ValueError):
+        return None
+    return ((box["north"] + box["south"]) / 2.0,
+            (box["east"] + box["west"]) / 2.0)
 
 try:
     import requests
@@ -1729,13 +1930,20 @@ WantedBy=default.target
 
 def step_config_profiles(ctx: Ctx):
     (ctx.data_dir / "Offline_Maps").mkdir(parents=True, exist_ok=True)
-    for d in (ctx.home / ".config" / "QLandkarteGT", ctx.home / ".config" / "qlog",
+    for d in (ctx.home / QMS_CONF_REL.parent, ctx.home / ".config" / "qlog",
               ctx.home / ".local" / "share" / "CHIRP"):
         d.mkdir(parents=True, exist_ok=True)
 
     # QMapShack profile carries HOME_PLACEHOLDER tokens instead of absolute paths,
     # so it does not assume the operator's username.
-    qms_conf = ctx.home / ".config" / "QLandkarteGT" / "QMapShack.conf"
+    qms_conf = ctx.home / QMS_CONF_REL
+    legacy_conf = ctx.home / QMS_CONF_LEGACY_REL
+    if legacy_conf.is_file():
+        ctx.log(f"[!] {legacy_conf} exists and QMapShack does not read it — earlier "
+                f"runs of this provisioner staged there. Anything you customised in "
+                f"it needs moving to {qms_conf} by hand; nothing is copied "
+                f"automatically, because a stale profile would overwrite a good one.",
+                "warn")
     # A profile that is absent must not be summarised as "staged" — that is
     # exactly how a node reaches the field on application defaults.
     staged, missing = [], []
@@ -1794,15 +2002,33 @@ def step_config_profiles(ctx: Ctx):
 
     # Generated from MAP_LAYERS so the directory a .tms reads from is always
     # the directory the fetcher wrote to.
+    #
+    # ServerUrl, not Script. QMapShack resolves a tile path by calling
+    # CMapTMS::createUrl() for EVERY tile on EVERY redraw, and for a <Script>
+    # layer that means constructing a fresh QJSEngine and re-evaluating the
+    # JavaScript each time, under a mutex. A <ServerUrl> is a QString::arg
+    # substitution and starts no engine at all. QMapShack rewrites {z}/{x}/{y}
+    # into its own placeholders when it parses the file.
+    #
+    # MinZoomLevel/MaxZoomLevel default to 1 and 21, so without them the
+    # canvas asks for eleven zoom levels the fetcher never downloaded. They
+    # are read from what is on disk rather than assumed, so a node that
+    # fetched a different range still describes itself correctly.
+    tiles_root = ctx.data_dir / "Offline_Maps" / "Offline_Tiles"
     for layer, tms_name, title in MAP_LAYERS:
+        zrange = tile_zoom_range(tiles_root / layer)
+        if zrange is None:
+            zoom_lines = ""
+            ctx.log(f"[!] No tiles under {tiles_root / layer} — {tms_name} written "
+                    f"without a zoom range. Run the map step, then re-run this one.",
+                    "warn")
+        else:
+            zoom_lines = ("  <MinZoomLevel>%d</MinZoomLevel>\n"
+                          "  <MaxZoomLevel>%d</MaxZoomLevel>\n" % zrange)
         (ctx.data_dir / "Offline_Maps" / tms_name).write_text(f"""<TMS>
 <Layer idx="0">
   <Title>{title}</Title>
-  <Script><![CDATA[(
-  function createPath(z, x, y) {{
-      return "file://{ctx.data_dir}/Offline_Maps/Offline_Tiles/{layer}/" + z + "/" + x + "/" + y + ".png";
-  }}
-  )]]></Script>
+{zoom_lines}  <ServerUrl>file://{ctx.data_dir}/Offline_Maps/Offline_Tiles/{layer}/{{z}}/{{x}}/{{y}}.png</ServerUrl>
 </Layer>
 </TMS>
 """)
@@ -1826,6 +2052,40 @@ def step_config_profiles(ctx: Ctx):
         else:
             ctx.log("[!] QMapShack.conf has no mapPath line — .tms files may need "
                     "manual import.", "warn")
+
+    # Point the first view at the operating area. Separate from the profile
+    # above on purpose: the profile is optional and group-supplied, while this
+    # needs only an area file, so a node with no staged profile still opens on
+    # its own ground rather than on QMapShack's built-in centre in Europe.
+    centres = []
+    for area_path in sorted(AREA_DIR.glob("*.json")):
+        try:
+            spec = json.loads(area_path.read_text(errors="replace"))
+        except (OSError, ValueError):
+            continue
+        if is_unmodified_sample(spec):
+            continue
+        centre = area_centre(spec)
+        if centre:
+            centres.append(centre)
+    if not centres:
+        ctx.log("[!] No operating area, so QMapShack keeps its built-in view centre "
+                "(12E 49N, central Europe) and will open on empty canvas. Define an "
+                "area and re-run this step.", "warn")
+    else:
+        # Several areas: the midpoint of them all, which puts the first view
+        # somewhere every area is reachable from rather than favouring one.
+        lat = sum(c[0] for c in centres) / len(centres)
+        lon = sum(c[1] for c in centres) / len(centres)
+        state = seed_qmapshack_view(qms_conf, lat, lon)
+        if state == "kept":
+            ctx.log("[+] QMapShack already has a saved view centre — left as it is.", "ok")
+        else:
+            ctx.log(f"[+] QMapShack first view centred on {lat:.4f}, {lon:.4f} at zoom "
+                    f"{QMS_DEFAULT_VIEW_ZOOM}, grid set to the area's UTM zone.", "ok")
+            ctx.log("[*] QMapShack overwrites this file when it closes, so the centre "
+                    "is a starting point, not a lock — move the view and it stays "
+                    "moved.", "info")
 
     if staged and not missing:
         ctx.log(f"[+] Config profiles staged: {', '.join(staged)}.", "ok")
@@ -3472,11 +3732,27 @@ def verify_deployment(ctx: Ctx, selected_ids: set) -> list:
                 "empty — set per operator" if not grid
                 else "MyGrid=" + grid + " (set by profile, confirm correct)")
 
-        qms = home / ".config" / "QLandkarteGT" / "QMapShack.conf"
+        qms = home / QMS_CONF_REL
         if want(qms, "QMapShack profile staged"):
             left = _placeholder_count(qms)
             add("QMapShack placeholders substituted", "pass" if left == 0 else "fail",
                 "clean" if left == 0 else "%d unsubstituted token(s) remain" % left)
+
+        # The profile is only useful where QMapShack looks for it. A file under
+        # the predecessor project's directory reads as staged and is not.
+        legacy = home / QMS_CONF_LEGACY_REL
+        if legacy.is_file():
+            add("QMapShack config in the directory QMapShack reads", "warn",
+                "%s also exists and is ignored by QMapShack; move anything you "
+                "need out of it" % legacy)
+
+        if qms.is_file():
+            conf_text = qms.read_text(errors="replace")
+            has_view = "posFocus=" in conf_text
+            add("QMapShack opens on the operating area", "pass" if has_view else "warn",
+                "view centre set" if has_view
+                else "no view centre — QMapShack will open on its built-in centre "
+                     "in central Europe, where this node has no tiles")
 
         want(home / ".local" / "share" / "CHIRP" / "analog_channels.csv",
              "CHIRP channel list staged", hard=False)
@@ -3488,11 +3764,19 @@ def verify_deployment(ctx: Ctx, selected_ids: set) -> list:
         for layer, tms_name, title in MAP_LAYERS:
             tms = ctx.data_dir / "Offline_Maps" / tms_name
             if want(tms, "Map source " + tms_name, hard=False):
+                tms_text = tms.read_text(errors="replace")
                 expect = "Offline_Tiles/" + layer + "/"
                 add("Map source " + tms_name + " points at the fetched layer",
-                    "pass" if expect in tms.read_text(errors="replace") else "fail",
-                    expect if expect in tms.read_text(errors="replace")
-                    else "does not reference " + expect)
+                    "pass" if expect in tms_text else "fail",
+                    expect if expect in tms_text else "does not reference " + expect)
+                # A <Script> layer costs a fresh JavaScript engine per tile per
+                # redraw. This row exists so a .tms left over from an earlier
+                # provisioning run is visible rather than quietly slow.
+                add("Map source " + tms_name + " resolves tiles without JavaScript",
+                    "pass" if "<ServerUrl>" in tms_text else "warn",
+                    "ServerUrl" if "<ServerUrl>" in tms_text
+                    else "still a <Script> layer from an earlier run — re-run the "
+                         "config step to replace it")
 
     # --- dock trigger ---------------------------------------------------
     if "dock_trigger" in selected_ids:

@@ -67,6 +67,33 @@ Confirm:
     - tiles land under ~/EMCOMM_Data/Offline_Maps/Offline_Tiles/<layer>/
     - no leftover configs/areas/example-area.json is present from an older clone
 
+**QMapShack's settings live at `~/.config/QLandkarte/QMapShack.conf`.** Not
+QLandkarteGT — that was the predecessor project, and earlier runs of this
+provisioner staged there, where QMapShack never looked. If a node carries a
+`~/.config/QLandkarteGT/` directory, anything you customised in it has never
+been in effect; move it across by hand. The provisioner warns when it sees one
+and copies nothing, because a stale profile would overwrite a good one.
+
+**The first view is centred on your area.** QMapShack's built-in default is
+12E 49N — central Europe — so on a node provisioned for anywhere else the first
+launch opens on blank canvas, and reaching your own area means panning across an
+ocean while the map source is asked for tiles that do not exist. The config step
+seeds the view centre, a zoom of 12, and a grid. It only seeds: once QMapShack
+has saved a view of its own, that one wins, and QMapShack rewrites this file
+every time it closes.
+
+    - open QMapShack once and confirm it lands on your area, not on Europe
+    - confirm both offline sources appear in the Maps tab and draw
+
+**The grid is UTM, which is what US National Grid is built on.** QMapShack has
+no USNG or MGRS support — the terms appear nowhere in its source, and its grid
+takes a projection rather than a grid system. Setting it to the operating area's
+UTM zone draws the same lines USNG does, at the same places; what you do not get
+is USNG's 100 km square letters on the labels, which read as UTM metres instead.
+For ICS work that means a position is transcribable but not directly readable as
+a USNG string. The basemap itself needs nothing: USGS Topo is already the ICS
+reference basemap, and there is no such thing as a USNG tile source.
+
 ## 6. Time Sync Behavior
 Digital modes are timing-sensitive; JS8Call in particular needs the clock close
 to correct. The dock-trigger autostart waits up to 15s for chrony to report a
