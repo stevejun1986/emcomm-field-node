@@ -98,7 +98,7 @@ Installed and configured, but never confirmed working end to end. Treat these as
 | **Direwolf PTT** | `PTT CM108` is a starting guess. CM108-style PTT over `/dev/hidraw*` has documented reliability problems on Linux |
 | **Direwolf audio device** | `ADEVICE plughw:1,0` is a placeholder and is very likely wrong for your interface |
 | **JS8Call operation** | no station profile ships; nothing has been keyed on-air from a provisioned node |
-| **GPS time source, on an EmComm node** | proven on the sibling project's command node — cold boot, no network, stratum 1 in about a minute, twice. The EmComm step is a hand-port of that one and has not been run on an EmComm node. See Chapter 4 |
+| **GPS time source, on an EmComm node** | proven on a separate node running the hand-ported equivalent of this step — cold boot, no network, stratum 1 in about a minute, twice. It has not been run on an EmComm node. See Chapter 4 |
 | **SatDump TLE retention** | the setting that stops SatDump overwriting a curated element set is newly changed and unverified on a node |
 
 If you confirm one of these on your own hardware, that is worth recording — the project
@@ -341,10 +341,11 @@ read gpsd (Chapter 12), and the mesh-to-GPX bridge takes peer positions from the
 Meshtastic node database rather than from a local receiver (Chapter 11). The GPS is
 there for time and for your own readout; it does not move a cursor on the map.
 
-**Status: Proven on the sibling project's command node** — a GlobalSat BU-353N, cold
-boot with no network reachable, `GPS0` selected at stratum 1 within about a minute, run
-twice to be sure. The EmComm step is a hand-port of that one and has **not yet been run
-on an EmComm node**. Checklist section 14 carries the same caveat.
+**Status: Proven, but not here.** The procedure above was worked out and confirmed on a
+separate node running the hand-ported equivalent of this step — a GlobalSat BU-353N,
+cold boot with no network reachable, `GPS0` selected at stratum 1 within about a minute,
+run twice to be sure. It has **not yet been run on an EmComm node**. Checklist section
+14 carries the same caveat.
 
 ## Chapter 5 — The RTL-SDR dongle: one radio, three programs
 
@@ -940,7 +941,7 @@ attached. Paths, unit names and commands were read out of the provisioner and ar
 correct; the *procedures* around them are reasoned, not rehearsed.
 
 Chapter 4 is the nearest thing to an exception: its procedure was worked out on real
-hardware, but on the sibling project's node rather than an EmComm one.
+hardware, but not on an EmComm node.
 
 ### Kept in step with `main`
 
@@ -959,7 +960,7 @@ never operated from a provisioned EmComm node by anyone who wrote this:
 
 | Chapter | What needs an operator's eye |
 |---|---|
-| 4 — Time and position | the procedure is proven, but on the **sibling project's** node. Needs one run on an EmComm node to move from ported to confirmed |
+| 4 — Time and position | the procedure is proven, but on other hardware. Needs one run on an EmComm node to move from ported to confirmed |
 | 6 — JS8Call | first-run setup order, and what a working audio configuration looks like |
 | 7 — ion2G | how a channel plan is actually loaded, and what running ALE looks like |
 | 8 — QLog | first-run fields, and where a Flatpak export really lands |
