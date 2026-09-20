@@ -211,7 +211,29 @@ drops and needs ~10 seconds to resume. Anything that opens and closes the port
 costs the node ten seconds of time source — which is why the verification row
 asks chronyd rather than opening the device.
 
-## 15. Hardware
+## 15. Operator's Manual
+The node can serve its own manual, and a node that needs the manual is usually a
+node with no network to fetch it over. This costs one download and one file copy,
+and it has to happen *before* the run — the document server step copies whatever is
+in `docs/` at that moment and does not come back for more.
+
+Download `EmComm-Operators-Manual.pdf` from the release page and put it in `docs/`:
+
+    cp ~/Downloads/EmComm-Operators-Manual.pdf docs/
+
+Or build it from the markdown source that ships in the tarball:
+
+    python3 scripts/build_manual.py          # needs reportlab
+
+Either way, confirm it landed after provisioning:
+
+    ls ~/EMCOMM_Data/PDF_Manuals/
+
+and that it is reachable at `http://127.0.0.1:8085` with the network pulled. A run
+with an empty `docs/` warns rather than failing, so an absent manual is easy to miss
+until the node is somewhere you cannot fix it.
+
+## 16. Hardware
 A recommended and tested hardware list ships with the release, covering
 everything except radios. Two things about it:
 

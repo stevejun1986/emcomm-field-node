@@ -13,7 +13,9 @@ It assumes the provisioner has run and the verification screen came back clean. 
 are building a node rather than using one, you want `README.md` and the
 `Pre-Deployment Config Checklist` instead.
 
-A copy lives on the node itself. See **Chapter 3 — The reference library**.
+A copy can live on the node itself, served offline by its own document server — put
+the PDF in `docs/` before provisioning and it gets there. See **Chapter 3 — The
+reference library**.
 
 ### What this node is
 
@@ -195,6 +197,16 @@ restart needed.
 > directory, and none are distributed — reference material is license-varied and large.
 > A node provisioned from a stock clone has a working document server with nothing in it,
 > and the provisioner says so in its log. Filling it is a deployment step.
+
+**This manual is the exception, and it is the one document to put there first.** It is
+published as an asset on the release rather than inside the tarball: download
+`EmComm-Operators-Manual.pdf`, drop it in the provisioner's `docs/` directory *before*
+you run, and it arrives in the library with everything else. `scripts/build_manual.py`
+rebuilds it from the markdown source if you would rather build than download.
+
+Timing is the part that catches people: the provisioner copies what is in `docs/` at
+the moment that step runs and does not come back for more. Put the manual there
+afterwards and it goes to `~/EMCOMM_Data/PDF_Manuals/` by hand, or at the next run.
 
 ## Chapter 4 — Time and position
 
@@ -992,8 +1004,17 @@ title bars included.
     # rebuild the PDF
     python3 scripts/build_manual.py
 
-The PDF is a build artifact and is not tracked. Every part, chapter and appendix starts
-on its own page, so a chapter can be printed and handed over on its own.
+The PDF is a build artifact and is not tracked: `docs/*.pdf` is gitignored, so it
+cannot ride along in a `git archive` of the repository. It reaches operators as an
+asset on the release instead, and the markdown source ships in the tarball beside
+this script for anyone who would rather build it.
+
+**Rebuild and re-attach it whenever the source changes**, or the release serves a
+manual that disagrees with its own repository — the two-copies drift this script
+exists to avoid.
+
+Every part, chapter and appendix starts on its own page, so a chapter can be printed
+and handed over on its own.
 
 ---
 
