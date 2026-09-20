@@ -967,7 +967,7 @@ is worse than a thin one. Revised so far:
 
 ### Chapters most likely to be wrong
 
-Five chapters are written from outside — the software was installed and launched, but
+Four chapters are written from outside — the software was installed and launched, but
 never operated from a provisioned EmComm node by anyone who wrote this:
 
 | Chapter | What needs an operator's eye |
@@ -976,7 +976,6 @@ never operated from a provisioned EmComm node by anyone who wrote this:
 | 6 — JS8Call | first-run setup order, and what a working audio configuration looks like |
 | 7 — ion2G | how a channel plan is actually loaded, and what running ALE looks like |
 | 8 — QLog | first-run fields, and where a Flatpak export really lands |
-| 16 — CHIRP | the read-before-write procedure against a specific radio |
 
 Corrections from someone who has used these on this hardware are worth more than anything
 that can be inferred from the provisioner.
