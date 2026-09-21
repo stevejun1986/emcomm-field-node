@@ -588,8 +588,9 @@ tiles stored on the disk, with no network.
 
 **What the provisioner did.** Installed QMapShack, fetched map tiles for the operating
 area defined in `configs/areas/<your-area>.json`, and staged a settings profile if your
-group supplied one. Tiles land in `~/EMCOMM_Data/Offline_Maps/`. It also pointed the
-first view at your area and set the grid — see below.
+group supplied one. Tiles land in `~/EMCOMM_Data/Offline_Maps/`. It also registered that
+directory with QMapShack, switched the topographic layer on, and pointed the first view
+at your area — see below.
 
 **Starting it.** Desktop shortcut, or:
 
@@ -629,6 +630,24 @@ will not do it for you, because a stale profile would overwrite a good one.
 QMapShack rewrites this file every time it closes. Anything you set by hand while it is
 running is lost on exit, so change settings in the application, not in the file.
 
+### Three things have to be true before a map draws
+
+Downloading tiles is not the same as QMapShack being able to see them, and the failure
+modes look alike from the outside. In order:
+
+| | If it is missing |
+|---|---|
+| `mapPath` names `~/EMCOMM_Data/Offline_Maps` | the Maps tab is **empty** — the sources are not even listed |
+| a source is registered active | the Maps tab **lists** the sources and the canvas stays empty |
+| the view is over your tiles | everything is listed and active and the screen is still blank, because you are looking somewhere else |
+
+The provisioner writes all three. If you are staring at an empty canvas, that table tells
+you which one to check, and the verification screen carries a row for each.
+
+**Only the topographic layer is switched on.** Two active raster layers stack and the
+upper one hides the lower, which reads as the lower one being broken. Satellite imagery
+is listed and one click away in the Maps tab.
+
 ### The first view, and the grid
 
 QMapShack's built-in default view is 12°E 49°N — central Europe. On a node provisioned
@@ -657,8 +676,10 @@ at a directory with no tiles in it — not that the file you loaded is wrong. Ch
 
 Check where you are looking, too. Tiles cover your operating area and nothing else, so
 a view over open ocean is blank for the same reason an empty directory is — and the two
-look identical. If the map is blank right after a fresh provisioning run, confirm the
-view is on your area before concluding the tiles are missing.
+look identical. If the map is blank right after a fresh provisioning run, work the table
+above before concluding the tiles are missing: an empty Maps tab, a populated Maps tab
+with nothing drawing, and a view in the wrong place are three different faults that
+produce the same white screen.
 
 **If panning is heavy on the CPU**, look at the map sources in
 `~/EMCOMM_Data/Offline_Maps/*.tms`. A source that carries a `<Script>` block is from an
