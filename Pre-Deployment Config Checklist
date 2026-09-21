@@ -74,16 +74,37 @@ provisioner staged there, where QMapShack never looked. If a node carries a
 been in effect; move it across by hand. The provisioner warns when it sees one
 and copies nothing, because a stale profile would overwrite a good one.
 
+**Downloading tiles is not the same as QMapShack being able to see them.**
+Three separate things have to be true, and none follows from the others:
+
+    1. mapPath must name ~/EMCOMM_Data/Offline_Maps, or QMapShack never lists
+       the .tms sources at all
+    2. a map source must be registered active, or it is listed in the Maps tab
+       and still not drawn — a map QMapShack meets for the first time is added
+       with status "Unused"
+    3. the view must be over the ground the tiles cover
+
+The config step writes all three. It runs after the map step in a full pass, so
+select both; running the map step alone downloads tiles that nothing points at.
+Everything it writes is a seed — QMapShack rewrites this file on exit, so once
+you have set your own view, layer and paths, those win on later runs.
+
 **The first view is centred on your area.** QMapShack's built-in default is
 12E 49N — central Europe — so on a node provisioned for anywhere else the first
 launch opens on blank canvas, and reaching your own area means panning across an
-ocean while the map source is asked for tiles that do not exist. The config step
-seeds the view centre, a zoom of 12, and a grid. It only seeds: once QMapShack
-has saved a view of its own, that one wins, and QMapShack rewrites this file
-every time it closes.
+ocean while the map source is asked for tiles that do not exist.
+
+**Only the topographic layer is switched on.** Two active raster layers stack
+and the upper one simply hides the lower, which reads as the lower one being
+broken. Satellite imagery is listed and one click away in the Maps tab.
 
     - open QMapShack once and confirm it lands on your area, not on Europe
-    - confirm both offline sources appear in the Maps tab and draw
+    - confirm the topo layer is drawing without you touching anything
+    - confirm the satellite source is listed, and draws when you click it
+    - if the canvas is empty but the Maps tab lists both, the map path is
+      registered and nothing is active — click a source
+    - if the Maps tab is empty, mapPath never got written; check the
+      verification screen's "QMapShack knows where the offline maps are" row
 
 **The grid is UTM, which is what US National Grid is built on.** QMapShack has
 no USNG or MGRS support — the terms appear nowhere in its source, and its grid

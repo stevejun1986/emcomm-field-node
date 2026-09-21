@@ -15,6 +15,7 @@ the view centre as a binary QVariant, so a byte wrong is a view silently at
 coordinates; this file re-checks the properties that do not need Qt present.
 """
 import importlib.util
+import hashlib
 import math
 import os
 import re
@@ -29,14 +30,15 @@ os.chdir(REPO)
 
 # The provisioner builds a GUI at import, so pull out just what is under test.
 SRC = (REPO / "deploy_emcomm_node_gui.py").read_text()
-mod = {"struct": struct, "math": math, "Path": Path}
+mod = {"struct": struct, "math": math, "Path": Path, "hashlib": hashlib}
 for name in ("QMS_CONF_REL", "QMS_CONF_LEGACY_REL", "QMS_VIEW_GROUP",
              "QMS_SCALES_SQUARE", "QMS_ZOOM_BASE", "QMS_DEFAULT_VIEW_ZOOM"):
     m = re.search(r"^%s = .*$" % name, SRC, re.M)
     assert m, "constant %s went missing" % name
     exec(compile(m.group(0), "<prov>", "exec"), mod)
 for fn in ("_qt_ini_escape", "qsettings_qpointf", "utm_proj_for", "tile_zoom_range",
-           "_qms_text_value", "seed_qmapshack_view", "area_centre"):
+           "_qms_text_value", "qms_map_key", "_canvas_edit", "configure_qmapshack",
+           "area_centre"):
     m = re.search(r"^def %s\(.*?(?=\n\ndef |\n\n# |\n\nMAP_LAYERS)" % fn, SRC, re.S | re.M)
     assert m, "function %s went missing" % fn
     exec(compile(m.group(0), "<prov>", "exec"), mod)
@@ -105,49 +107,120 @@ assert "+south" not in mod["utm_proj_for"](33.45, -112.07)
 print("OK: UTM zone and hemisphere follow the operating area")
 
 
-# --- seeding is a first-launch nudge, never a takeover -------------------
+# --- all three conditions, because maps are invisible without any one ----
+# 1. mapPath names the directory, or QMapShack never lists the .tms files.
+# 2. the map is registered active, or it is listed but not drawn.
+# 3. the view is over the tiles.
+def fixture(td, with_tms=True):
+    maps = Path(td) / "Offline_Maps"
+    maps.mkdir(parents=True)
+    files = [maps / "Topo_Offline.tms", maps / "Satellite_Offline.tms"]
+    if with_tms:
+        for i, f in enumerate(files):
+            f.write_text("<TMS><Layer idx=\"0\"><Title>L%d</Title></Layer></TMS>\n" % i)
+    return maps, files
+
 with tempfile.TemporaryDirectory() as td:
+    maps, files = fixture(td)
     conf = Path(td) / "QMapShack.conf"
-    assert mod["seed_qmapshack_view"](conf, 33.45, -112.07) == "seeded"
+    r = mod["configure_qmapshack"](conf, maps, files, 33.45, -112.07)
     text = conf.read_text()
-    assert "[Canvas]" in text
-    assert "Views\\View 1\\posFocus=" in text
-    # zoomIndex = 20 - slippy zoom, on the square (tile-aligned) scale table
+
+    assert r["mapPath"] == "added", r
+    assert ("mapPath=%s" % maps) in text, text
+    assert r["maps"].startswith("registered Topo_Offline.tms"), r
+    assert r["view"] == "seeded", r
+
+    # The key QMapShack will compute for that file, independently derived.
+    key = hashlib.md5(files[0].read_bytes()[:4096]).hexdigest()
+    assert mod["qms_map_key"](files[0]) == key
+    assert "map2\\keysKnownMaps=%s" % key in text, text
+    assert "map2\\%s\\isActive=true" % key in text, text
+    assert "map2\\%s\\filename=%s" % (key, files[0]) in text, text
+
+    # Only the first layer draws: two active raster layers stack, and the
+    # upper one hides the lower.
+    other = hashlib.md5(files[1].read_bytes()[:4096]).hexdigest()
+    assert other not in text, "the second layer must not also be activated"
+print("OK: map path, an active map source, and the view are all written")
+
+# A stock clone has no staged profile, so there is no config file at all.
+# That is the case that used to leave the maps invisible.
+with tempfile.TemporaryDirectory() as td:
+    maps, files = fixture(td)
+    conf = Path(td) / "QMapShack.conf"
+    assert not conf.exists()
+    r = mod["configure_qmapshack"](conf, maps, files, 33.45, -112.07)
+    assert conf.is_file(), "no config was written where none existed"
+    assert r["mapPath"] == "added" and r["maps"].startswith("registered")
+print("OK: a node with no staged profile still gets a usable QMapShack")
+
+# Re-running must not take anything back from an operator who has since used
+# QMapShack -- it writes its own answers to all three on exit.
+with tempfile.TemporaryDirectory() as td:
+    maps, files = fixture(td)
+    conf = Path(td) / "QMapShack.conf"
+    mod["configure_qmapshack"](conf, maps, files, 33.45, -112.07)
+    before = conf.read_text()
+    r = mod["configure_qmapshack"](conf, maps, files, 0.0, 0.0)
+    assert r == {"mapPath": "already listed", "maps": "kept", "view": "kept"}, r
+    assert conf.read_text() == before, "a re-run changed a saved configuration"
+print("OK: a second run keeps every choice the operator has made")
+
+# An existing mapPath from a group's profile is appended to, not replaced.
+with tempfile.TemporaryDirectory() as td:
+    maps, files = fixture(td)
+    conf = Path(td) / "QMapShack.conf"
+    conf.write_text("[Canvas]\nmapPath=/srv/group-maps\n[MainWindow]\nx=1\n")
+    r = mod["configure_qmapshack"](conf, maps, files, 33.45, -112.07)
+    out = conf.read_text()
+    assert r["mapPath"] == "appended", r
+    assert "mapPath=/srv/group-maps, %s" % maps in out, out
+    assert "[MainWindow]" in out and "x=1" in out
+    assert out.index("posFocus") < out.index("[MainWindow]"), "keys landed outside [Canvas]"
+print("OK: an existing map path is appended to, never replaced")
+
+# No tiles fetched yet: say so rather than register a map file that is not there.
+with tempfile.TemporaryDirectory() as td:
+    maps, files = fixture(td, with_tms=False)
+    conf = Path(td) / "QMapShack.conf"
+    r = mod["configure_qmapshack"](conf, maps, files, 33.45, -112.07)
+    assert r["maps"] == "no .tms files to register", r
+    assert r["mapPath"] == "added" and r["view"] == "seeded"
+print("OK: absent map sources are reported, not invented")
+
+# No operating area: the path and maps still get written, the view does not.
+with tempfile.TemporaryDirectory() as td:
+    maps, files = fixture(td)
+    conf = Path(td) / "QMapShack.conf"
+    r = mod["configure_qmapshack"](conf, maps, files, None, None)
+    assert r["view"] == "no operating area", r
+    assert r["mapPath"] == "added" and r["maps"].startswith("registered")
+    assert "posFocus" not in conf.read_text()
+print("OK: a missing area costs the view, not the maps")
+
+with tempfile.TemporaryDirectory() as td:
+    maps, files = fixture(td)
+    conf = Path(td) / "QMapShack.conf"
+    mod["configure_qmapshack"](conf, maps, files, 33.45, -112.07)
+    text = conf.read_text()
     assert "Views\\View 1\\map2\\zoomIndex=%d" % (20 - mod["QMS_DEFAULT_VIEW_ZOOM"]) in text
     assert "Views\\View 1\\scales=1" in text
     assert "+proj=utm +zone=12" in text
     x, y = decode(text.split("Views\\View 1\\posFocus=")[1].splitlines()[0])
     assert abs(math.degrees(y) - 33.45) < 1e-9 and abs(math.degrees(x) + 112.07) < 1e-9
-
-    # A second run must not move an operator who has since saved their own view.
-    before = conf.read_text()
-    assert mod["seed_qmapshack_view"](conf, 0.0, 0.0) == "kept"
-    assert conf.read_text() == before
-print("OK: seeds an absent view, and leaves a saved one alone")
-
-# Seeding into a file that already has a [Canvas] section must not cost the
-# mapPath line -- that is what registers the offline maps in the first place.
-with tempfile.TemporaryDirectory() as td:
-    conf = Path(td) / "QMapShack.conf"
-    conf.write_text("[Canvas]\nmapPath=/home/op/EMCOMM_Data/Offline_Maps\n"
-                    "[MainWindow]\ngeometry=@Variant(x)\n")
-    assert mod["seed_qmapshack_view"](conf, 33.45, -112.07) == "seeded"
-    out = conf.read_text()
-    assert "mapPath=/home/op/EMCOMM_Data/Offline_Maps" in out
-    assert "[MainWindow]" in out and "geometry=@Variant(x)" in out
-    assert out.index("posFocus") < out.index("[MainWindow]"), "keys landed outside [Canvas]"
-print("OK: merges into an existing [Canvas] without disturbing mapPath")
+print("OK: zoom index, scale table, grid projection and centre are all correct")
 
 # The staged profile is a group's file, not ours. A byte this provisioner
-# cannot decode has to come back out unchanged rather than as U+FFFD written
-# over somebody's settings.
+# cannot decode has to come back out unchanged.
 with tempfile.TemporaryDirectory() as td:
+    maps, files = fixture(td)
     conf = Path(td) / "QMapShack.conf"
-    conf.write_bytes(b"[Canvas]\nmapPath=/home/op/Maps\ntitle=caf\xe9\n[MainWindow]\nx=1\n")
-    assert mod["seed_qmapshack_view"](conf, 33.45, -112.07) == "seeded"
+    conf.write_bytes(b"[Canvas]\ntitle=caf\xe9\n[MainWindow]\nx=1\n")
+    mod["configure_qmapshack"](conf, maps, files, 33.45, -112.07)
     out = conf.read_bytes()
     assert b"title=caf\xe9" in out, "an undecodable byte was corrupted"
-    assert b"mapPath=/home/op/Maps" in out and b"[MainWindow]" in out
+    assert b"[MainWindow]" in out
 print("OK: bytes this provisioner cannot decode survive the edit")
 
 

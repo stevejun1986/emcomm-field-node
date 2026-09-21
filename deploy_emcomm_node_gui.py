@@ -408,59 +408,129 @@ def _qms_text_value(s: str) -> str:
     return '"%s"' % escaped if needs_quotes else escaped
 
 
-def seed_qmapshack_view(conf: Path, lat: float, lon: float,
-                        zoom: int = QMS_DEFAULT_VIEW_ZOOM) -> str:
-    """Point QMapShack's first view at the operating area. Returns a status.
+def qms_map_key(tms: Path) -> str:
+    """QMapShack's identifier for a map file: MD5 of its first 4096 bytes.
 
-    QMapShack's built-in default view is lon 12, lat 49 -- central Europe,
-    where a node provisioned for anywhere else has no tiles at all. The
-    operator's first launch therefore opens on blank canvas and they pan and
-    zoom across an ocean to reach their own area, and every step of that asks
-    the map source for tiles that do not exist.
-
-    Only ever seeds: if the view already carries a centre, that is the
-    operator's own saved position and it is left alone. QMapShack rewrites
-    this file when it exits, so this matters for the first launch and then
-    stops mattering, which is the intent.
+    CMapItem::setFilename() hashes exactly that much and uses the hex digest
+    as the key everything else in the config hangs off. A .tms is far smaller
+    than 4 KiB, so in practice this is the hash of the whole file -- and it
+    changes whenever the file does, which is why the map registration below is
+    written in the same step that writes the .tms.
     """
-    prefix = "Views\\%s\\" % QMS_VIEW_GROUP
-    wanted = [
-        (prefix + "posFocus", qsettings_qpointf(math.radians(lon), math.radians(lat))),
-        (prefix + "map2\\zoomIndex", str(QMS_ZOOM_BASE - zoom)),
-        (prefix + "scales", str(QMS_SCALES_SQUARE)),
-        (prefix + "grid\\proj", _qms_text_value(utm_proj_for(lat, lon))),
-    ]
+    with tms.open("rb") as f:
+        return hashlib.md5(f.read(4096)).hexdigest()
 
-    # surrogateescape, not "replace": this is Qt's file, and a byte this
-    # provisioner cannot decode must come back out unchanged rather than as a
-    # replacement character written over somebody's staged profile.
-    lines = (conf.read_text(errors="surrogateescape").splitlines()
-             if conf.is_file() else [])
 
-    # Hand-edited rather than run through configparser: this file is Qt's, not
-    # ours. configparser would rewrite every line it did not understand, and
-    # the keys here carry backslashes and the values carry Qt's own escaping.
-    if any(l.startswith(prefix + "posFocus=") for l in lines):
-        return "kept"
-
-    block = ["%s=%s" % (k, v) for k, v in wanted]
+def _canvas_edit(lines: list, additions: list) -> list:
+    """Insert key=value lines at the end of the [Canvas] section."""
+    block = ["%s=%s" % (k, v) for k, v in additions]
     try:
         start = lines.index("[Canvas]")
     except ValueError:
         if lines and lines[-1].strip():
             lines.append("")
-        lines += ["[Canvas]"] + block
+        return lines + ["[Canvas]"] + block
+    end = len(lines)
+    for i in range(start + 1, len(lines)):
+        if lines[i].startswith("["):
+            end = i
+            break
+    lines[end:end] = block
+    return lines
+
+
+def configure_qmapshack(conf: Path, maps_dir: Path, tms_files: list,
+                        lat=None, lon=None,
+                        zoom: int = QMS_DEFAULT_VIEW_ZOOM) -> dict:
+    """Make QMapShack find, draw and open on the offline maps.
+
+    Three separate things have to be true before a downloaded tile pyramid is
+    visible, and none of them follows from the others:
+
+      1. mapPath has to name the directory, or QMapShack never lists the .tms
+         files at all. This used to be written only when a group supplied a
+         QMapShack.conf to stage -- and configs/ ships empty, so on a stock
+         clone it was never written and the maps were invisible.
+      2. A map QMapShack meets for the first time is added with status Unused
+         (CMapDraw::loadMapList), which means listed but NOT drawn. Registering
+         it under map2/keysKnownMaps with isActive=true is what makes it draw
+         on first launch instead of after the operator finds and clicks it.
+      3. The view has to be over the area the tiles cover.
+
+    Every part is a seed, never an overwrite: an operator who has run
+    QMapShack once has their own answer to all three in this file, and
+    QMapShack rewrites it on exit.
+
+    tms_files is in priority order: the first becomes the active map, the rest
+    are left for the operator to switch to. Two active raster layers stack, and
+    the upper one simply hides the lower, which reads as the lower one being
+    broken.
+    """
+    # surrogateescape, not "replace": this is Qt's file, and a byte this
+    # provisioner cannot decode must come back out unchanged rather than as a
+    # replacement character written over somebody's staged profile.
+    lines = (conf.read_text(errors="surrogateescape").splitlines()
+             if conf.is_file() else [])
+    done = {}
+
+    # Hand-edited rather than run through configparser: this file is Qt's, not
+    # ours. configparser would rewrite every line it did not understand, and
+    # the keys here carry backslashes and the values carry Qt's own escaping.
+    def has(key):
+        return any(l.startswith(key + "=") for l in lines)
+
+    # --- 1. the directory the .tms files live in --------------------------
+    want_path = str(maps_dir)
+    for i, line in enumerate(lines):
+        if line.startswith("mapPath="):
+            if want_path in line:
+                done["mapPath"] = "already listed"
+            else:
+                # Qt writes a QStringList comma-separated, so this appends
+                # rather than replacing whatever the operator already had.
+                lines[i] = line + ", " + want_path
+                done["mapPath"] = "appended"
+            break
     else:
-        end = len(lines)
-        for i in range(start + 1, len(lines)):
-            if lines[i].startswith("["):
-                end = i
-                break
-        lines[end:end] = block
+        lines = _canvas_edit(lines, [("mapPath", _qms_text_value(want_path))])
+        done["mapPath"] = "added"
+
+    # --- 2. the maps themselves, so the first one draws -------------------
+    prefix = "Views\\%s\\map2\\" % QMS_VIEW_GROUP
+    present = [f for f in tms_files if f.is_file()]
+    if not present:
+        done["maps"] = "no .tms files to register"
+    elif has(prefix + "keysKnownMaps"):
+        done["maps"] = "kept"
+    else:
+        keys = [qms_map_key(f) for f in present]
+        adds = [(prefix + "keysKnownMaps", ", ".join(keys[:1]))]
+        # Only the first is activated; see the docstring on stacking.
+        adds.append((prefix + keys[0] + "\\isActive", "true"))
+        adds.append((prefix + keys[0] + "\\filename",
+                     _qms_text_value(str(present[0]))))
+        lines = _canvas_edit(lines, adds)
+        done["maps"] = "registered %s as the active map" % present[0].name
+
+    # --- 3. the view over the area ----------------------------------------
+    vprefix = "Views\\%s\\" % QMS_VIEW_GROUP
+    if lat is None or lon is None:
+        done["view"] = "no operating area"
+    elif has(vprefix + "posFocus"):
+        done["view"] = "kept"
+    else:
+        lines = _canvas_edit(lines, [
+            (vprefix + "posFocus",
+             qsettings_qpointf(math.radians(lon), math.radians(lat))),
+            (vprefix + "map2\\zoomIndex", str(QMS_ZOOM_BASE - zoom)),
+            (vprefix + "scales", str(QMS_SCALES_SQUARE)),
+            (vprefix + "grid\\proj", _qms_text_value(utm_proj_for(lat, lon))),
+        ])
+        done["view"] = "seeded"
 
     conf.parent.mkdir(parents=True, exist_ok=True)
     conf.write_text("\n".join(lines) + "\n", errors="surrogateescape")
-    return "seeded"
+    return done
 
 
 def area_centre(spec: dict) -> tuple:
@@ -2033,30 +2103,12 @@ def step_config_profiles(ctx: Ctx):
 </TMS>
 """)
 
-    # No else on the outer guard, deliberately: when the profile was never
-    # staged, that is already reported above, and a second warning about the
-    # contents of a file that does not exist describes a consequence rather
-    # than a fault of its own. Only a staged profile that genuinely lacks the
-    # line has something new to say.
-    if qms_conf.is_file():
-        text = qms_conf.read_text()
-        if re.search(r"^mapPath=", text, re.MULTILINE):
-            if str(ctx.data_dir / "Offline_Maps") not in text:
-                text = re.sub(r"^(mapPath=.*)$",
-                               lambda m: f"{m.group(1)}, {ctx.data_dir}/Offline_Maps",
-                               text, count=1, flags=re.MULTILINE)
-                qms_conf.write_text(text)
-                ctx.log(f"[+] Registered {ctx.data_dir}/Offline_Maps with QMapShack mapPath.", "ok")
-            else:
-                ctx.log(f"[+] {ctx.data_dir}/Offline_Maps already registered with QMapShack mapPath.", "ok")
-        else:
-            ctx.log("[!] QMapShack.conf has no mapPath line — .tms files may need "
-                    "manual import.", "warn")
-
-    # Point the first view at the operating area. Separate from the profile
-    # above on purpose: the profile is optional and group-supplied, while this
-    # needs only an area file, so a node with no staged profile still opens on
-    # its own ground rather than on QMapShack's built-in centre in Europe.
+    # Everything QMapShack needs before a downloaded tile pyramid is visible.
+    # Deliberately NOT guarded on a staged profile existing: configs/ ships
+    # empty, so the old guard meant that on a stock clone -- which is every
+    # node unless a group supplies a profile -- mapPath was never written and
+    # the maps this provisioner had just spent an hour downloading were
+    # invisible to the application that exists to draw them.
     centres = []
     for area_path in sorted(AREA_DIR.glob("*.json")):
         try:
@@ -2068,24 +2120,46 @@ def step_config_profiles(ctx: Ctx):
         centre = area_centre(spec)
         if centre:
             centres.append(centre)
-    if not centres:
+    # Several areas: the midpoint of them all, which puts the first view
+    # somewhere every area is reachable from rather than favouring one.
+    lat = sum(c[0] for c in centres) / len(centres) if centres else None
+    lon = sum(c[1] for c in centres) / len(centres) if centres else None
+
+    result = configure_qmapshack(
+        qms_conf, ctx.data_dir / "Offline_Maps",
+        [ctx.data_dir / "Offline_Maps" / tms for _l, tms, _t in MAP_LAYERS],
+        lat, lon)
+
+    ctx.log(f"[+] QMapShack map path {result['mapPath']}: "
+            f"{ctx.data_dir}/Offline_Maps", "ok")
+
+    if result["maps"] == "kept":
+        ctx.log("[+] QMapShack already knows these map sources — left as they are.", "ok")
+    elif result["maps"].startswith("registered"):
+        ctx.log(f"[+] QMapShack map sources {result['maps']}. A map QMapShack meets "
+                f"for the first time is listed but not drawn, so without this the "
+                f"Maps tab shows the sources and the canvas stays empty.", "ok")
+        others = [tms for _l, tms, _t in MAP_LAYERS][1:]
+        if others:
+            ctx.log(f"[*] {', '.join(others)} stay off — two raster layers stack and "
+                    f"the upper hides the lower. Click one in the Maps tab to switch.",
+                    "info")
+    else:
+        ctx.log(f"[!] {result['maps']} — run the map step first, then re-run this one.",
+                "warn")
+
+    if result["view"] == "no operating area":
         ctx.log("[!] No operating area, so QMapShack keeps its built-in view centre "
                 "(12E 49N, central Europe) and will open on empty canvas. Define an "
                 "area and re-run this step.", "warn")
+    elif result["view"] == "kept":
+        ctx.log("[+] QMapShack already has a saved view centre — left as it is.", "ok")
     else:
-        # Several areas: the midpoint of them all, which puts the first view
-        # somewhere every area is reachable from rather than favouring one.
-        lat = sum(c[0] for c in centres) / len(centres)
-        lon = sum(c[1] for c in centres) / len(centres)
-        state = seed_qmapshack_view(qms_conf, lat, lon)
-        if state == "kept":
-            ctx.log("[+] QMapShack already has a saved view centre — left as it is.", "ok")
-        else:
-            ctx.log(f"[+] QMapShack first view centred on {lat:.4f}, {lon:.4f} at zoom "
-                    f"{QMS_DEFAULT_VIEW_ZOOM}, grid set to the area's UTM zone.", "ok")
-            ctx.log("[*] QMapShack overwrites this file when it closes, so the centre "
-                    "is a starting point, not a lock — move the view and it stays "
-                    "moved.", "info")
+        ctx.log(f"[+] QMapShack first view centred on {lat:.4f}, {lon:.4f} at zoom "
+                f"{QMS_DEFAULT_VIEW_ZOOM}, grid set to the area's UTM zone.", "ok")
+        ctx.log("[*] QMapShack overwrites this file when it closes, so all of this is "
+                "a starting point, not a lock — move the view or switch layers and it "
+                "stays moved.", "info")
 
     if staged and not missing:
         ctx.log(f"[+] Config profiles staged: {', '.join(staged)}.", "ok")
@@ -3746,13 +3820,28 @@ def verify_deployment(ctx: Ctx, selected_ids: set) -> list:
                 "%s also exists and is ignored by QMapShack; move anything you "
                 "need out of it" % legacy)
 
-        if qms.is_file():
-            conf_text = qms.read_text(errors="replace")
-            has_view = "posFocus=" in conf_text
-            add("QMapShack opens on the operating area", "pass" if has_view else "warn",
-                "view centre set" if has_view
-                else "no view centre — QMapShack will open on its built-in centre "
-                     "in central Europe, where this node has no tiles")
+        # Three independent things, and the maps are invisible if any one of
+        # them is missing. Checked separately so a failure names which.
+        conf_text = qms.read_text(errors="replace") if qms.is_file() else ""
+        maps_dir = str(ctx.data_dir / "Offline_Maps")
+        registered = any(l.startswith("mapPath=") and maps_dir in l
+                         for l in conf_text.splitlines())
+        add("QMapShack knows where the offline maps are", "pass" if registered else "fail",
+            "mapPath lists " + maps_dir if registered
+            else "mapPath does not list " + maps_dir + " — QMapShack will not list "
+                 "the .tms sources at all, whatever is in them")
+
+        active = "keysKnownMaps=" in conf_text and "isActive=true" in conf_text
+        add("An offline map is set to draw", "pass" if active else "warn",
+            "a map source is registered active" if active
+            else "no map registered as active — the sources appear in the Maps tab "
+                 "but the canvas stays empty until one is clicked")
+
+        has_view = "posFocus=" in conf_text
+        add("QMapShack opens on the operating area", "pass" if has_view else "warn",
+            "view centre set" if has_view
+            else "no view centre — QMapShack will open on its built-in centre "
+                 "in central Europe, where this node has no tiles")
 
         want(home / ".local" / "share" / "CHIRP" / "analog_channels.csv",
              "CHIRP channel list staged", hard=False)
