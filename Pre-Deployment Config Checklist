@@ -105,6 +105,14 @@ broken. Satellite imagery is listed and one click away in the Maps tab.
       registered and nothing is active — click a source
     - if the Maps tab is empty, mapPath never got written; check the
       verification screen's "QMapShack knows where the offline maps are" row
+    - zoom in and out: the map draws across the fetched range and goes blank
+      below it, which is correct — there are no tiles that far out
+
+**Zooming out past the fetched range gives you a blank canvas, not an error.**
+Tiles cover z10-15 by default. Below z10 QMapShack draws nothing at all, which
+looks exactly like a broken map source. If the canvas is yellow, zoom in before
+concluding anything is wrong. A message reading "N tiles pending" that never
+clears means it is asking for a zoom level that was never downloaded.
 
 **The grid is UTM, which is what US National Grid is built on.** QMapShack has
 no USNG or MGRS support — the terms appear nowhere in its source, and its grid

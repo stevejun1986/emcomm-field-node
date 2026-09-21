@@ -402,6 +402,25 @@ def tile_zoom_range(layer_dir: Path) -> tuple:
     return (min(zooms), max(zooms)) if zooms else None
 
 
+#: A .tms MinZoomLevel/MaxZoomLevel is NOT a slippy zoom. It is QMapShack's own
+#: scale index, and it runs the other way: CMapTMS::draw() computes
+#:
+#:     zMax = 21 - layer.minZoomLevel      # highest slippy z the layer may use
+#:     zMin = 21 - layer.maxZoomLevel      # lowest slippy z the layer may use
+#:
+#: so the element named "Min" bounds the zoomed-IN end. Writing the slippy
+#: numbers straight in told QMapShack a z10-15 pyramid served z6-z11: it then
+#: clamped the canvas to z11, asked for z6-z9 tiles that do not exist, and sat
+#: on "22 tiles pending" over a blank canvas. Found on a node, not in a test.
+TMS_ZOOM_BASE = 21
+
+
+def tms_zoom_levels(zrange: tuple) -> tuple:
+    """(MinZoomLevel, MaxZoomLevel) for a slippy (min_z, max_z) tile range."""
+    min_z, max_z = zrange
+    return TMS_ZOOM_BASE - max_z, TMS_ZOOM_BASE - min_z
+
+
 def _qms_text_value(s: str) -> str:
     """A plain string as QSettings would write it into an INI."""
     escaped, needs_quotes = _qt_ini_escape(s.encode("utf-8"))
@@ -2080,10 +2099,12 @@ def step_config_profiles(ctx: Ctx):
     # substitution and starts no engine at all. QMapShack rewrites {z}/{x}/{y}
     # into its own placeholders when it parses the file.
     #
-    # MinZoomLevel/MaxZoomLevel default to 1 and 21, so without them the
-    # canvas asks for eleven zoom levels the fetcher never downloaded. They
-    # are read from what is on disk rather than assumed, so a node that
-    # fetched a different range still describes itself correctly.
+    # MinZoomLevel/MaxZoomLevel default to 1 and 21 -- QMapShack's own scale
+    # indices, meaning slippy z0-z20 -- so without them the canvas asks for
+    # levels the fetcher never downloaded. They are read from what is on disk
+    # rather than assumed, so a node that fetched a different range still
+    # describes itself correctly, and they are written in QMapShack's
+    # inverted numbering rather than in slippy zooms. See TMS_ZOOM_BASE.
     tiles_root = ctx.data_dir / "Offline_Maps" / "Offline_Tiles"
     for layer, tms_name, title in MAP_LAYERS:
         zrange = tile_zoom_range(tiles_root / layer)
@@ -2093,8 +2114,10 @@ def step_config_profiles(ctx: Ctx):
                     f"without a zoom range. Run the map step, then re-run this one.",
                     "warn")
         else:
+            # Inverted on purpose -- see TMS_ZOOM_BASE.
             zoom_lines = ("  <MinZoomLevel>%d</MinZoomLevel>\n"
-                          "  <MaxZoomLevel>%d</MaxZoomLevel>\n" % zrange)
+                          "  <MaxZoomLevel>%d</MaxZoomLevel>\n"
+                          % tms_zoom_levels(zrange))
         (ctx.data_dir / "Offline_Maps" / tms_name).write_text(f"""<TMS>
 <Layer idx="0">
   <Title>{title}</Title>

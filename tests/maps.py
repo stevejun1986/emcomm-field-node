@@ -31,12 +31,13 @@ os.chdir(REPO)
 # The provisioner builds a GUI at import, so pull out just what is under test.
 SRC = (REPO / "deploy_emcomm_node_gui.py").read_text()
 mod = {"struct": struct, "math": math, "Path": Path, "hashlib": hashlib}
-for name in ("QMS_CONF_REL", "QMS_CONF_LEGACY_REL", "QMS_VIEW_GROUP",
+for name in ("QMS_CONF_REL", "QMS_CONF_LEGACY_REL", "QMS_VIEW_GROUP", "TMS_ZOOM_BASE",
              "QMS_SCALES_SQUARE", "QMS_ZOOM_BASE", "QMS_DEFAULT_VIEW_ZOOM"):
     m = re.search(r"^%s = .*$" % name, SRC, re.M)
     assert m, "constant %s went missing" % name
     exec(compile(m.group(0), "<prov>", "exec"), mod)
 for fn in ("_qt_ini_escape", "qsettings_qpointf", "utm_proj_for", "tile_zoom_range",
+           "tms_zoom_levels",
            "_qms_text_value", "qms_map_key", "_canvas_edit", "configure_qmapshack",
            "area_centre"):
     m = re.search(r"^def %s\(.*?(?=\n\ndef |\n\n# |\n\nMAP_LAYERS)" % fn, SRC, re.S | re.M)
@@ -237,14 +238,34 @@ with tempfile.TemporaryDirectory() as td:
 print("OK: the declared zoom range is what is on disk, not an assumption")
 
 
+# --- .tms zoom levels are QMapShack's scale indices, not slippy zooms ----
+# CMapTMS::draw():   zMax = 21 - minZoomLevel   (highest slippy z allowed)
+#                    zMin = 21 - maxZoomLevel   (lowest slippy z allowed)
+# So the element named "Min" bounds the zoomed-IN end. Writing the slippy
+# numbers straight in told QMapShack a z10-15 pyramid served z6-z11: it
+# clamped the canvas to z11, requested z6-z9 tiles that do not exist, and
+# showed "22 tiles pending" over a blank canvas on a real node.
+assert mod["TMS_ZOOM_BASE"] == 21
+for (lo, hi), expect in (((10, 15), (6, 11)), ((0, 20), (1, 21)), ((12, 12), (9, 9))):
+    got = mod["tms_zoom_levels"]((lo, hi))
+    assert got == expect, ((lo, hi), got, expect)
+    # Round-trip through QMapShack's own arithmetic: what it will believe.
+    zmax, zmin = 21 - got[0], 21 - got[1]
+    assert (zmin, zmax) == (lo, hi), ("QMapShack would believe", zmin, zmax)
+# The defaults QMapShack uses when the elements are absent mean slippy 0-20,
+# which is why omitting them worked and writing slippy numbers did not.
+assert (21 - 1, 21 - 21) == (20, 0)
+print("OK: .tms zoom levels are written in QMapShack's inverted numbering")
+
+
 # --- the .tms the provisioner writes -------------------------------------
 # Rendered here the same way step_config_profiles renders it, so the shape
 # under test is the shape that ships.
 tms = """<TMS>
 <Layer idx="0">
   <Title>Topographic (Offline)</Title>
-  <MinZoomLevel>10</MinZoomLevel>
-  <MaxZoomLevel>15</MaxZoomLevel>
+  <MinZoomLevel>6</MinZoomLevel>
+  <MaxZoomLevel>11</MaxZoomLevel>
   <ServerUrl>file:///home/op/EMCOMM_Data/Offline_Maps/Offline_Tiles/topo/{z}/{x}/{y}.png</ServerUrl>
 </Layer>
 </TMS>
@@ -254,13 +275,15 @@ layer = root.find("Layer")
 assert layer.find("Script") is None, "a <Script> layer starts a JS engine per tile"
 url = layer.find("ServerUrl").text
 assert url.startswith("file://") and url.endswith("/{z}/{x}/{y}.png"), url
-assert int(layer.find("MinZoomLevel").text) == 10
-assert int(layer.find("MaxZoomLevel").text) == 15
+# 6 and 11 are slippy z15 and z10 in QMapShack's numbering.
+assert 21 - int(layer.find("MinZoomLevel").text) == 15
+assert 21 - int(layer.find("MaxZoomLevel").text) == 10
 
 src = (REPO / "deploy_emcomm_node_gui.py").read_text()
 gen = src.split("for layer, tms_name, title in MAP_LAYERS:")[1][:1200]
 assert "<ServerUrl>" in gen, "the generator no longer writes a ServerUrl"
 assert "<Script>" not in gen, "the generator still writes a Script layer"
+assert "tms_zoom_levels(" in gen, "the generator writes raw slippy zooms again"
 print("OK: tile paths resolve by substitution, with the real zoom range declared")
 
 
