@@ -154,7 +154,7 @@ except ImportError:
 #: asking git would report "unknown" on precisely the copy an operator runs.
 #: Bump it in the commit that precedes the tag, so a clone of main never
 #: claims to be a release it is ahead of.
-VERSION = "1.0.2"
+VERSION = "1.0.4"
 
 PROJECT         = "emcomm"
 OPERATOR_PREFIX = "EMCOMM"
