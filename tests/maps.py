@@ -294,4 +294,40 @@ assert mod["area_centre"]({"north": 1.0}) is None
 assert mod["area_centre"]({}) is None
 print("OK: an area centre is read from a centre or derived from a box")
 
+# --- the shipped diagnostic must not drift from the provisioner ----------
+# scripts/diagnose_qmapshack_maps.py is standalone on purpose -- a node may
+# not have a Python with tkinter when someone needs to run it, so it cannot
+# import the provisioner. That means it repeats these constants, and a repeated
+# constant is a constant that drifts. This is the check that stops it.
+DIAG = (REPO / "scripts" / "diagnose_qmapshack_maps.py").read_text()
+
+def const(src, name):
+    m = re.search(r"^%s = (.+?)(?:\s+#.*)?$" % name, src, re.M)
+    assert m, "%s not found" % name
+    return m.group(1).strip()
+
+for name in ("QMS_CONF_REL", "QMS_CONF_LEGACY_REL", "QMS_VIEW_GROUP",
+             "QMS_ZOOM_BASE", "TMS_ZOOM_BASE", "OPERATOR_PREFIX"):
+    a, b = const(SRC, name), const(DIAG, name)
+    assert a == b, "%s drifted: provisioner %s, diagnostic %s" % (name, a, b)
+print("OK: the diagnostic's constants still match the provisioner's")
+
+# It is a troubleshooting tool for a node that may be in a bad state, so it
+# must not need anything the node might not have, and must not write.
+assert "import tkinter" not in DIAG and "requests" not in DIAG, "stdlib only"
+for forbidden in ("write_text(", "write_bytes(", "mkdir(", "unlink(", "rmtree"):
+    assert forbidden not in DIAG, "the diagnostic is read-only: %s" % forbidden
+assert DIAG.lstrip().startswith("#!/usr/bin/env python3"), "needs a shebang"
+assert "GNU General Public License" in DIAG, "shipped script needs the GPL notice"
+print("OK: the diagnostic is stdlib-only, read-only, and carries its notice")
+
+# It ships in the release archive, which is where an operator will need it.
+import subprocess
+listed = subprocess.run(["git", "check-ignore", "scripts/diagnose_qmapshack_maps.py"],
+                        capture_output=True, text=True).returncode
+assert listed != 0, "the diagnostic is gitignored and would not ship"
+attrs = (REPO / ".gitattributes").read_text()
+assert "scripts/" not in attrs, "scripts/ must not be export-ignored"
+print("OK: the diagnostic ships in the release archive")
+
 print("\nMAPS: ALL ASSERTIONS PASSED")

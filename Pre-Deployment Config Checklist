@@ -105,6 +105,14 @@ broken. Satellite imagery is listed and one click away in the Maps tab.
       registered and nothing is active — click a source
     - if the Maps tab is empty, mapPath never got written; check the
       verification screen's "QMapShack knows where the offline maps are" row
+
+**If the canvas is blank, run the diagnostic before anything else:**
+
+    python3 scripts/diagnose_qmapshack_maps.py
+
+Read-only, safe with QMapShack open, and it names which of the four conditions
+is missing rather than leaving you to tell four identical blank screens apart.
+It ships in the release archive, so it is on the node already.
     - zoom in and out: the map draws across the fetched range and goes blank
       below it, which is correct — there are no tiles that far out
 
