@@ -171,6 +171,18 @@ def main():
                                         "no -- listed in the Maps tab, not drawn"))
         print("     layer type   %s" % ("ServerUrl" if "<ServerUrl>" in body
                                         else "Script -- a JS engine per tile, per redraw"))
+        # QMapShack substitutes Qt place markers; it only rewrites the {z}/{x}/{y}
+        # form into them from v1.20.0 (QMS-920). Older builds leave the braces
+        # alone, ask for a file literally named "{z}/{x}/{y}.png", and sit on
+        # "N tiles pending" forever.
+        if "{z}" in body or "{x}" in body or "{y}" in body:
+            print("     BAD URL      uses {z}/{x}/{y}; QMapShack before v1.20.0")
+            print("                  does not translate those. Needs %1/%2/%3.")
+            faults.append("%s uses {z}/{x}/{y} placeholders -- replace with "
+                          "%%1/%%2/%%3" % tms.name)
+        elif "%1" not in body:
+            print("     BAD URL      no %1/%2/%3 place markers in the ServerUrl")
+            faults.append("%s has no %%1/%%2/%%3 place markers" % tms.name)
         print("     declares     slippy z%d-z%d%s"
               % (declared[0], declared[1],
                  "" if mn and mx else "  (no range given; assumed z0-z20)"))

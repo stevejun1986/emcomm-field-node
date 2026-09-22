@@ -2096,8 +2096,23 @@ def step_config_profiles(ctx: Ctx):
     # CMapTMS::createUrl() for EVERY tile on EVERY redraw, and for a <Script>
     # layer that means constructing a fresh QJSEngine and re-evaluating the
     # JavaScript each time, under a mutex. A <ServerUrl> is a QString::arg
-    # substitution and starts no engine at all. QMapShack rewrites {z}/{x}/{y}
-    # into its own placeholders when it parses the file.
+    # substitution and starts no engine at all.
+    #
+    # %1/%2/%3, NOT {z}/{x}/{y}. createUrl() ends in
+    #
+    #     return layer.strUrl.arg(z).arg(x).arg(y);
+    #
+    # so the URL must already carry Qt's own place markers. QMapShack does
+    # rewrite the brace form into them -- but only since v1.20.0, changelog
+    # entry QMS-920. On 1.17.1, which is what Mint 22.3 ships, the braces
+    # survive untouched, .arg() finds nothing to replace, and every request
+    # asks for a file literally named "{z}/{x}/{y}.png". Nothing exists at
+    # that path, so nothing decodes, nothing caches, and the canvas sits on
+    # "N tiles pending" forever. Observed on a node, 2026-09-22.
+    #
+    # %1/%2/%3 is what QMapShack's own bundled .tms files use, and it works on
+    # every version. A home directory containing a literal "%1" would break
+    # it, which is not a path anyone has.
     #
     # MinZoomLevel/MaxZoomLevel default to 1 and 21 -- QMapShack's own scale
     # indices, meaning slippy z0-z20 -- so without them the canvas asks for
@@ -2121,7 +2136,7 @@ def step_config_profiles(ctx: Ctx):
         (ctx.data_dir / "Offline_Maps" / tms_name).write_text(f"""<TMS>
 <Layer idx="0">
   <Title>{title}</Title>
-{zoom_lines}  <ServerUrl>file://{ctx.data_dir}/Offline_Maps/Offline_Tiles/{layer}/{{z}}/{{x}}/{{y}}.png</ServerUrl>
+{zoom_lines}  <ServerUrl>file://{ctx.data_dir}/Offline_Maps/Offline_Tiles/{layer}/%1/%2/%3.png</ServerUrl>
 </Layer>
 </TMS>
 """)

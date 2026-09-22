@@ -266,7 +266,7 @@ tms = """<TMS>
   <Title>Topographic (Offline)</Title>
   <MinZoomLevel>6</MinZoomLevel>
   <MaxZoomLevel>11</MaxZoomLevel>
-  <ServerUrl>file:///home/op/EMCOMM_Data/Offline_Maps/Offline_Tiles/topo/{z}/{x}/{y}.png</ServerUrl>
+  <ServerUrl>file:///home/op/EMCOMM_Data/Offline_Maps/Offline_Tiles/topo/%1/%2/%3.png</ServerUrl>
 </Layer>
 </TMS>
 """
@@ -274,7 +274,7 @@ root = ET.fromstring(tms)
 layer = root.find("Layer")
 assert layer.find("Script") is None, "a <Script> layer starts a JS engine per tile"
 url = layer.find("ServerUrl").text
-assert url.startswith("file://") and url.endswith("/{z}/{x}/{y}.png"), url
+assert url.startswith("file://"), url
 # 6 and 11 are slippy z15 and z10 in QMapShack's numbering.
 assert 21 - int(layer.find("MinZoomLevel").text) == 15
 assert 21 - int(layer.find("MaxZoomLevel").text) == 10
@@ -284,6 +284,16 @@ gen = src.split("for layer, tms_name, title in MAP_LAYERS:")[1][:1200]
 assert "<ServerUrl>" in gen, "the generator no longer writes a ServerUrl"
 assert "<Script>" not in gen, "the generator still writes a Script layer"
 assert "tms_zoom_levels(" in gen, "the generator writes raw slippy zooms again"
+
+# createUrl() ends in strUrl.arg(z).arg(x).arg(y), so the URL has to carry Qt's
+# own place markers. QMapShack rewrites {z}/{x}/{y} into them only from v1.20.0
+# (QMS-920); Mint 22.3 ships 1.17.1, where the braces survive and every request
+# asks for a file literally named "{z}/{x}/{y}.png". Cost a full day of testing.
+assert "%1/%2/%3" in gen, "the ServerUrl must use Qt place markers"
+assert "{z}" not in gen and "{{z}}" not in gen, \
+    "brace templates are unsupported before QMapShack v1.20.0"
+# %1 = z, %2 = x, %3 = y, matching the fetcher's <layer>/<z>/<x>/<y>.png layout.
+assert url.endswith("/%1/%2/%3.png"), url
 print("OK: tile paths resolve by substitution, with the real zoom range declared")
 
 
