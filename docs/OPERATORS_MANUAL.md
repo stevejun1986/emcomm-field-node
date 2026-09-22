@@ -1,8 +1,9 @@
 # EmComm Field Node — Operator's Manual
 
-**Draft.** Describes the provisioner on `main`. The last tagged release is **1.0.2**;
-`main` carries the GPS time source (Chapter 4) on top of it, which is not in that
-release. Where the two differ, this manual follows `main` and says so.
+**Draft.** Describes the provisioner on `main`, which is **v1.0.3** — the GPS time
+source (Chapter 4) and the offline map fixes (Chapter 12) are both in that release.
+One chapter runs ahead of it: Chapter 9's radio interface binding is unmerged, and
+says so where it matters. Where the manual and a release differ, it follows `main`.
 
 ---
 
@@ -88,6 +89,7 @@ Confirmed on a real machine, with the result recorded in the project's issue his
 | Meshtastic CLI runs and reaches a node | `--info` connected first try |
 | The mesh-to-GPX bridge produces a valid GPX | live 9-node mesh, 4 peers with positions |
 | QMapShack imports that GPX | peers drawn as waypoints |
+| **Offline maps draw with no network** | 20,000-tile pyramid, topographic layer active on first launch, view on the operating area, UTM grid reading in metres |
 
 ### Unproven
 
@@ -673,7 +675,10 @@ place, which swaps the underlying file out from under anything holding the old o
 again.** If peers have not moved in a while, confirm you are looking at fresh data before
 concluding the mesh is quiet — a stationary node and a stale file look identical.
 
-**Status: Proven** — mesh peers imported and drawn from a bridge-generated GPX.
+**Status: Proven** — mesh peers imported and drawn from a bridge-generated GPX, and
+offline maps drawing from local tiles with no network: a 20,000-tile pyramid, the
+topographic layer active on first launch, the view on the operating area, and the UTM
+grid reading in metres.
 
 ### Where the settings live
 
@@ -727,6 +732,14 @@ The basemap is USGS Topo, which is the ICS reference basemap already.
 
 ### If the map is blank
 
+**Run the diagnostic first.** It is read-only, safe with QMapShack open, and it names
+which of the four conditions is missing instead of leaving you to tell four identical
+blank screens apart:
+
+    python3 scripts/diagnose_qmapshack_maps.py
+
+It ships with the provisioner, so it is already on the node.
+
 A blank map with warnings about empty filenames usually means a tile source is pointing
 at a directory with no tiles in it — not that the file you loaded is wrong. Check that
 `~/EMCOMM_Data/Offline_Maps/` actually contains tiles for the area you are looking at.
@@ -738,11 +751,26 @@ above before concluding the tiles are missing: an empty Maps tab, a populated Ma
 with nothing drawing, and a view in the wrong place are three different faults that
 produce the same white screen.
 
-**If panning is heavy on the CPU**, look at the map sources in
-`~/EMCOMM_Data/Offline_Maps/*.tms`. A source that carries a `<Script>` block is from an
-older provisioning run: QMapShack starts a JavaScript engine for every tile it draws
-through one. A current `.tms` uses `<ServerUrl>` and declares the zoom range on disk.
-Re-running the config step replaces it.
+**If the Maps tab lists a source, it is active, and the canvas is still blank at every
+zoom**, open `~/EMCOMM_Data/Offline_Maps/*.tms` and look at the `ServerUrl`. It must
+read `%1/%2/%3`, not `{z}/{x}/{y}`:
+
+    <ServerUrl>file:///home/you/EMCOMM_Data/Offline_Maps/Offline_Tiles/topo/%1/%2/%3.png</ServerUrl>
+
+QMapShack only understands the `{z}/{x}/{y}` form from **v1.20.0**, and Linux Mint 22.3
+ships **1.17.1**. On the older build the braces are never substituted, every request asks
+for a file literally named `{z}/{x}/{y}.png`, and you get a blank canvas with a "tiles
+pending" count that never clears. One command fixes a node that has it:
+
+    sed -i 's|{z}/{x}/{y}|%1/%2/%3|' ~/EMCOMM_Data/Offline_Maps/*.tms
+
+Close QMapShack first — it rewrites its settings on exit. The diagnostic reports this
+one by name.
+
+**If panning is heavy on the CPU**, look at the same files for a `<Script>` block. That
+is from an older provisioning run: QMapShack starts a JavaScript engine for every tile
+it draws through one. A current `.tms` uses `<ServerUrl>` and declares the zoom range on
+disk. Re-running the config step replaces it.
 
 ## Chapter 13 — Kiwix: the offline knowledgebase
 
@@ -1091,8 +1119,8 @@ is worse than a thin one. Revised so far:
 | Landed on `main` | What it changed here |
 |---|---|
 | GPS time source (PR #54) | Chapter 4 rewritten from "not in this version" to a procedure; Chapter 1 gained the `/etc/` and `configs/` notes; Chapter 20, Appendix A and Appendix B updated; the Unproven table's time row restated |
-| Radio interface binding (PR #57) | Chapter 9 rewritten: the audio device and PTT come from `configs/radio.conf`, `PTT CM108` does not key a Digirig Mobile, and "connect the radio last". Chapter 2 gained the boot/dock rule, Chapter 20 both. **Open while that PR is unmerged** |
-| Offline map fixes (PR #56) | Chapter 12 gained where the settings actually live, the seeded first view, the UTM-not-USNG grid, and what a slow pan means. **Open while that PR is unmerged** — until it lands, a node still stages to `QLandkarteGT` and opens on Europe |
+| Radio interface binding (PR #57) | Chapter 9 rewritten: the audio device and PTT come from `configs/radio.conf`, `PTT CM108` does not key a Digirig Mobile, and "connect the radio last". Chapter 2 gained the boot/dock rule, Chapter 20 both. **Open — unmerged, and no radio has been keyed** |
+| Offline map fixes (PR #56) | Chapter 12 gained where the settings actually live, the seeded first view, the UTM-not-USNG grid, and what a blank canvas means. **Merged; shipped in v1.0.3** |
 
 ### Chapters most likely to be wrong
 
