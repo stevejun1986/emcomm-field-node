@@ -164,6 +164,22 @@ a re-run then quietly provisions less than the last one did.
 4. **Open the reference library** — Chapter 3. Everything staged onto the node is
    reachable from there, including the notes each tool's chapter refers to.
 
+### Before you connect a radio
+
+**Power the node on, and dock it, with no radio connected to the interface.**
+
+A radio interface whose PTT hangs off a serial control line — RTS or DTR, which is how
+most of them work — can assert that line the moment something opens the port. Opening it
+is not the same as deciding to transmit, and several things open it without being asked:
+Direwolf, JS8Call, ion2G, or the dock autostart launching one of those (Chapter 20).
+
+A node coming up with a radio already attached can therefore key it, with no operator
+involved and nothing on screen to say so. Get the node configured and the interface
+paths settled first, then connect the radio — into a dummy load — and key it
+deliberately. Chapter 9 has the order.
+
+This costs nothing and it is the only way this arrangement bites.
+
 ### One thing that surprises people
 
 `~/.local/bin` only joins your `PATH` at login, and only if it already exists. On a node
@@ -491,28 +507,69 @@ discoverable from `$HOME`, which is where Direwolf looks by default.
 It prints what it is doing as it runs. Leave the terminal open — the output is the
 diagnostic.
 
-**What you must fix before it works.** Two lines in the config are placeholders, and
-both are flagged in the file itself:
+### Connect the radio last
 
-    ADEVICE plughw:1,0        # almost certainly not your interface
-    PTT CM108                 # a guess, and a known-shaky one on Linux
+**Do not have a radio connected while the node boots, docks, or is being configured for
+the first time.**
+
+An interface whose PTT hangs off a serial control line — RTS or DTR — can assert that
+line the moment something opens the port, before any software decides to transmit. And
+several things open it without being asked: Direwolf, JS8Call, ion2G, or the dock
+autostart launching one of those when you dock the laptop (Chapter 2).
+
+The result is a transmitter keyed with no operator involved and nothing on screen saying
+so. Work in this order:
+
+1. interface plugged into the laptop, **nothing plugged into the radio**
+2. settle the audio device and the device paths, and re-run the provisioning step
+3. connect the radio, into a dummy load
+4. key it deliberately and watch it
+
+That order costs nothing and removes the only way this arrangement can bite you.
+
+### What you must set before it works
+
+Two values decide whether Direwolf can hear and transmit, and the provisioner writes
+whatever you declared in `configs/radio.conf` rather than guessing:
+
+    ADEVICE=plughw:CARD=Device,DEV=0
+    PTT_DEVICE=/dev/serial/by-id/usb-Silicon_Labs_CP2102_...-if00-port0
+    PTT_METHOD=RTS
 
 1. **Find your real audio device:**
 
         arecord -l
+        cat /proc/asound/cards
 
-   Then set `ADEVICE` to the matching `plughw:<card>,<device>`.
+   Prefer the card **id** — the name in square brackets — over the index. Indices move
+   when another USB audio device is attached.
 
-2. **Confirm PTT actually keys the radio.** CM108-style PTT over `/dev/hidraw*` has
-   documented reliability problems on Linux. Watch the radio, not the screen — if it does
-   not key, the alternatives are CAT control or a serial line, both of which Direwolf
-   supports.
+2. **Find the PTT device, and name it by id:**
+
+        ls -l /dev/serial/by-id/
+
+   Not `/dev/ttyUSB0`. A GPS receiver and a radio interface both enumerate as `ttyUSB*`,
+   and which one gets `ttyUSB0` depends on the order they were plugged in — so a numbered
+   path can hand your GPS daemon the radio interface, or hand Direwolf the GPS.
+
+> **`PTT CM108` will not key a Digirig Mobile**, and it is what this node ships with if
+> you declare nothing. The Mobile is a USB hub carrying two devices: a CM108-based sound
+> card and a CP2102 serial bridge. Its PTT is an open-collector switch on the CP2102's
+> **RTS** line — so the chip that makes `PTT CM108` look right is the audio chip, and the
+> keying lives somewhere else. Use `PTT_METHOD=RTS` with the serial path.
+
+3. **Confirm PTT actually keys the radio.** Watch the radio, not the screen. The
+   provisioner never opens the PTT device and neither does the verification screen — both
+   only check the path exists, precisely because opening it is what transmits. Nothing
+   short of watching the radio tells you this works.
 
 **Files.** `~/.config/direwolf/direwolf.conf`, and a copy at `~/direwolf.conf`.
 
-**Status: Unproven.** The config is generated correctly and `MYCALL` is verified, but the
-audio device is a placeholder and the PTT method is explicitly untested. **Do not assume
-this station is transmitting until you have watched the radio key.**
+**Status: Unproven.** The config is generated correctly and `MYCALL` is verified, and the
+audio device and PTT path are now whatever you declared rather than a guess — but
+**nothing in this project has ever keyed a radio.** Verification reads the filesystem; it
+cannot observe RF. Do not assume this station is transmitting until you have watched the
+radio key.
 
 ## Chapter 10 — Meshtastic: the LoRa mesh
 
@@ -926,9 +983,14 @@ CF-30 in a Havis dock and ships as a **future feature**. The provisioner install
 says so. Do not build an operating procedure around docking the laptop and expecting the
 station to come up.
 
-**Direwolf is not confirmed to transmit.** The audio device is a placeholder and the PTT
-method is a guess with known reliability problems on Linux. See Chapter 9. **Watch the
-radio key before you rely on this.**
+**Direwolf is not confirmed to transmit.** Nothing in this project has ever keyed a
+radio. The audio device and PTT path are declared by you rather than guessed, but
+declaring them is not the same as proving them, and verification reads the filesystem —
+it cannot observe RF. See Chapter 9. **Watch the radio key before you rely on this.**
+
+**A radio connected at boot or dock can be keyed without you.** An RTS- or DTR-keyed
+interface asserts when something opens its port, and the dock autostart opens ports.
+Connect the radio last. See Chapter 2 and Chapter 9.
 
 **Offline time depends on hardware you supply.** A node with no GPS receiver has no
 reachable time source and never synchronises — silently. The GPS step fixes it, but
@@ -1029,6 +1091,7 @@ is worse than a thin one. Revised so far:
 | Landed on `main` | What it changed here |
 |---|---|
 | GPS time source (PR #54) | Chapter 4 rewritten from "not in this version" to a procedure; Chapter 1 gained the `/etc/` and `configs/` notes; Chapter 20, Appendix A and Appendix B updated; the Unproven table's time row restated |
+| Radio interface binding (PR #57) | Chapter 9 rewritten: the audio device and PTT come from `configs/radio.conf`, `PTT CM108` does not key a Digirig Mobile, and "connect the radio last". Chapter 2 gained the boot/dock rule, Chapter 20 both. **Open while that PR is unmerged** |
 | Offline map fixes (PR #56) | Chapter 12 gained where the settings actually live, the seeded first view, the UTM-not-USNG grid, and what a slow pan means. **Open while that PR is unmerged** — until it lands, a node still stages to `QLandkarteGT` and opens on Europe |
 
 ### Chapters most likely to be wrong
