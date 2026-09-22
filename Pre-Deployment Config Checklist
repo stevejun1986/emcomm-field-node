@@ -101,6 +101,80 @@ Confirm:
     - tiles land under ~/EMCOMM_Data/Offline_Maps/Offline_Tiles/<layer>/
     - no leftover configs/areas/example-area.json is present from an older clone
 
+**QMapShack's settings live at `~/.config/QLandkarte/QMapShack.conf`.** Not
+QLandkarteGT — that was the predecessor project, and earlier runs of this
+provisioner staged there, where QMapShack never looked. If a node carries a
+`~/.config/QLandkarteGT/` directory, anything you customised in it has never
+been in effect; move it across by hand. The provisioner warns when it sees one
+and copies nothing, because a stale profile would overwrite a good one.
+
+**Downloading tiles is not the same as QMapShack being able to see them.**
+Three separate things have to be true, and none follows from the others:
+
+    1. mapPath must name ~/EMCOMM_Data/Offline_Maps, or QMapShack never lists
+       the .tms sources at all
+    2. a map source must be registered active, or it is listed in the Maps tab
+       and still not drawn — a map QMapShack meets for the first time is added
+       with status "Unused"
+    3. the view must be over the ground the tiles cover
+
+The config step writes all three. It runs after the map step in a full pass, so
+select both; running the map step alone downloads tiles that nothing points at.
+Everything it writes is a seed — QMapShack rewrites this file on exit, so once
+you have set your own view, layer and paths, those win on later runs.
+
+**The first view is centred on your area.** QMapShack's built-in default is
+12E 49N — central Europe — so on a node provisioned for anywhere else the first
+launch opens on blank canvas, and reaching your own area means panning across an
+ocean while the map source is asked for tiles that do not exist.
+
+**Only the topographic layer is switched on.** Two active raster layers stack
+and the upper one simply hides the lower, which reads as the lower one being
+broken. Satellite imagery is listed and one click away in the Maps tab.
+
+    - open QMapShack once and confirm it lands on your area, not on Europe
+    - confirm the topo layer is drawing without you touching anything
+    - confirm the satellite source is listed, and draws when you click it
+    - if the canvas is empty but the Maps tab lists both, the map path is
+      registered and nothing is active — click a source
+    - if the Maps tab is empty, mapPath never got written; check the
+      verification screen's "QMapShack knows where the offline maps are" row
+
+**If the canvas is blank, run the diagnostic before anything else:**
+
+    python3 scripts/diagnose_qmapshack_maps.py
+
+Read-only, safe with QMapShack open, and it names which of the four conditions
+is missing rather than leaving you to tell four identical blank screens apart.
+It ships in the release archive, so it is on the node already.
+    - zoom in and out: the map draws across the fetched range and goes blank
+      below it, which is correct — there are no tiles that far out
+
+**Zooming out past the fetched range gives you a blank canvas, not an error.**
+Tiles cover z10-15 by default. Below z10 QMapShack draws nothing at all, which
+looks exactly like a broken map source. If the canvas is yellow, ZOOM IN before
+concluding anything is wrong.
+
+**And the "N tiles pending" message goes stale down there.** Below the layer's
+minimum zoom QMapShack skips the code that recomputes that label, so the last
+count it ever set stays on screen indefinitely. It reads as work in progress
+when nothing is happening at all. A count that does not change as you pan and
+zoom is a frozen label, not a queue — the tiles are local files, and 22 of them
+would resolve in milliseconds.
+
+Told apart quickly: zoom in two steps. If the map appears, it was the range.
+`scripts/diagnose_qmapshack_maps.py` also reports it — it flags a saved view
+whose zoom falls outside the tiles on disk.
+
+**The grid is UTM, which is what US National Grid is built on.** QMapShack has
+no USNG or MGRS support — the terms appear nowhere in its source, and its grid
+takes a projection rather than a grid system. Setting it to the operating area's
+UTM zone draws the same lines USNG does, at the same places; what you do not get
+is USNG's 100 km square letters on the labels, which read as UTM metres instead.
+For ICS work that means a position is transcribable but not directly readable as
+a USNG string. The basemap itself needs nothing: USGS Topo is already the ICS
+reference basemap, and there is no such thing as a USNG tile source.
+
 ## 6. Time Sync Behavior
 Digital modes are timing-sensitive; JS8Call in particular needs the clock close
 to correct. The dock-trigger autostart waits up to 15s for chrony to report a

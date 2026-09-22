@@ -53,7 +53,7 @@ To confirm by hand, or on a node provisioned before that screen existed:
 
 ```bash
 grep -nE "PLACEHOLDER|MyCall|MyGrid" ~/.config/JS8Call.ini
-grep -nE "PLACEHOLDER|/home/" ~/.config/QLandkarteGT/QMapShack.conf
+grep -nE "PLACEHOLDER|/home/" ~/.config/QLandkarte/QMapShack.conf
 ```
 
 `MyCall` must be the callsign you entered. `MyGrid` should be empty. No
@@ -316,6 +316,7 @@ python3 tests/dryrun.py     # every step, nothing installed
 python3 tests/flow.py       # the five screens and verification wiring
 python3 tests/area.py       # center/radius input, the estimate, the file it writes
 python3 tests/throttle.py   # pacing, backoff, and behavior when rate-limited
+python3 tests/maps.py       # where QMapShack's config goes, and what is in it
 python3 tests/radio.py      # the radio binding, and that nothing opens the port
 python3 tests/build.py      # build parallelism capped by memory, not cores
 python3 tests/isolation.py  # one failing step must not stop the others
