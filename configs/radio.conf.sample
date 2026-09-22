@@ -1,0 +1,62 @@
+# EmComm radio interface binding — copy to configs/radio.conf and edit.
+#
+# Per-unit hardware, so configs/radio.conf is gitignored: a by-id path carries
+# the interface's serial number, which is machine data and must not land in the
+# repository. This .sample ships; your real file does not — configs/*.conf is
+# already gitignored here, as everything in configs/ is.
+#
+# The provisioner never opens either device. Opening a serial port asserts its
+# control lines, and on an interface whose PTT is wired to one of them that
+# puts a radio on the air. You name them; the provisioner substitutes and
+# checks that the paths exist, nothing more.
+#
+#
+# ADEVICE — the sound card Direwolf uses for receive and transmit audio.
+#
+#   List what the machine has. Read-only, opens nothing:
+#       arecord -l
+#       cat /proc/asound/cards
+#
+#   Card NUMBERS move when another USB audio device is attached, so prefer the
+#   card-id form. Both are valid Direwolf syntax:
+#
+#       ADEVICE=plughw:CARD=Device,DEV=0        # by card id — preferred
+#       ADEVICE=plughw:1,0                      # by index — moves
+#
+#   The id is the name in square brackets in /proc/asound/cards. A generic
+#   CM108-class interface usually reports "Device"; a second one becomes
+#   "Device_1", so check rather than assume when two are attached.
+#
+#
+# PTT_DEVICE / PTT_METHOD — how Direwolf keys the radio.
+#
+#   Digirig Mobile is a USB hub carrying TWO devices: a CM108-based sound card
+#   and a CP2102 serial bridge. Its PTT is an open-collector switch driven by
+#   the RTS line of that serial port — NOT a CM108 GPIO. `PTT CM108` therefore
+#   does not key this hardware, however plausible it looks given the audio chip.
+#
+#       ls -l /dev/serial/by-id/          # with the interface attached
+#
+#       PTT_DEVICE=/dev/serial/by-id/usb-Silicon_Labs_CP2102_USB_to_UART_Bridge_Controller_EXAMPLE-if00-port0
+#       PTT_METHOD=RTS
+#
+#   Use the by-id path, not /dev/ttyUSB0. A GPS puck and a radio interface both
+#   enumerate as ttyUSB*, and which one gets ttyUSB0 depends on the order they
+#   were plugged in — so a numbered path can hand gpsd your radio interface, or
+#   hand Direwolf your GPS.
+#
+#   PTT_METHOD accepts what Direwolf accepts:
+#       RTS  DTR        assert the line to key
+#       -RTS -DTR       inverted, for interfaces wired the other way
+#       CM108           GPIO on a CM108-class sound chip; PTT_DEVICE is then a
+#                       /dev/hidraw* path, or empty to let Direwolf find one
+#
+#
+# UNTESTED. Nothing in this repository has keyed a radio. Watch the radio key
+# before you rely on the station to transmit, and read the note about docking
+# and power-on in the operator's manual first — an interface that keys on RTS
+# can transmit the moment something opens its port.
+
+ADEVICE=
+PTT_DEVICE=
+PTT_METHOD=RTS
