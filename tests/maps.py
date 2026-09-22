@@ -294,6 +294,36 @@ assert mod["area_centre"]({"north": 1.0}) is None
 assert mod["area_centre"]({}) is None
 print("OK: an area centre is read from a centre or derived from a box")
 
+# --- neither row may pass for work that did not happen -------------------
+# configure_qmapshack() creates the settings file whether or not a profile
+# exists to stage, so an ungated existence check reported "QMapShack profile
+# staged -- PASS" on a run whose own log said "QMapShack left unconfigured".
+# Observed on a node, 2026-09-22.
+verif = SRC[SRC.index('if "config_profiles" in selected_ids:'):]
+verif = verif[:verif.index('if "dock_trigger" in selected_ids:')]
+i = verif.index('qms = home / QMS_CONF_REL')
+gate = verif[i:i + 400]
+assert 'Path("configs/QMapShack.conf").is_file()' in gate, \
+    "the profile row must be gated on a profile existing to stage"
+assert verif.index('_placeholder_count(qms)') > verif.index(
+    'Path("configs/QMapShack.conf").is_file()'), \
+    "the placeholder row must sit inside that gate -- it has nothing to " \
+    "substitute in a file the provisioner generated"
+assert "no configs/QMapShack.conf to stage" in verif, \
+    "with no profile, the row must say so rather than pass"
+
+# The step's closing summary fired "Every application will start unconfigured"
+# directly beneath eight lines reporting that QMapShack's map path, active
+# source and view had all been written. A summary that contradicts the log
+# above it teaches people to distrust the log.
+step = SRC[SRC.index("def step_config_profiles"):SRC.index("def step_dock_trigger")]
+# Comments quote the old wording to explain why it went; only the code counts.
+code = "\n".join(l for l in step.splitlines() if not l.lstrip().startswith("#"))
+assert "Every application will start unconfigured" not in code
+assert "configured separately, above" in code
+print("OK: no verification row passes for work that did not happen")
+
+
 # --- the shipped diagnostic must not drift from the provisioner ----------
 # scripts/diagnose_qmapshack_maps.py is standalone on purpose -- a node may
 # not have a Python with tkinter when someone needs to run it, so it cannot

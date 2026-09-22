@@ -2184,15 +2184,23 @@ def step_config_profiles(ctx: Ctx):
                 "a starting point, not a lock — move the view or switch layers and it "
                 "stays moved.", "info")
 
+    # "Every application will start unconfigured" stopped being true when the
+    # QMapShack map configuration moved out of the profile path: on a stock
+    # clone this line fired directly under eight lines reporting that map path,
+    # active source and view had all been written. A summary that contradicts
+    # the log above it teaches people to distrust the log.
+    maps_note = ("" if result.get("mapPath") is None else
+                 " QMapShack's offline maps are configured separately, above, and"
+                 " are not affected by this.")
     if staged and not missing:
         ctx.log(f"[+] Config profiles staged: {', '.join(staged)}.", "ok")
     elif staged:
         ctx.log(f"[!] Staged {', '.join(staged)} — NOT staged: {', '.join(missing)}. "
                 f"Those applications will start on their own defaults.", "warn")
     else:
-        ctx.log("[!] No config profiles staged — configs/ is empty or this is not "
-                "being run from the repository root. Every application will start "
-                "unconfigured.", "err")
+        ctx.log(f"[!] No config profiles staged — configs/ holds none of them, which "
+                f"is how it ships. {', '.join(missing)} will start on their own "
+                f"defaults.{maps_note}", "err")
     ctx.sudo("systemctl", "enable", "gpsd.socket")
     ctx.sudo("systemctl", "enable", "chrony")
 
@@ -3829,11 +3837,21 @@ def verify_deployment(ctx: Ctx, selected_ids: set) -> list:
                 "empty — set per operator" if not grid
                 else "MyGrid=" + grid + " (set by profile, confirm correct)")
 
+        # Gated on a profile actually existing to stage. configure_qmapshack()
+        # creates this file whether or not one does, so an ungated existence
+        # check passed on a run whose own log said "QMapShack left unconfigured"
+        # -- and the placeholder row under it passed by having nothing to
+        # substitute. Two green rows for work that did not happen.
         qms = home / QMS_CONF_REL
-        if want(qms, "QMapShack profile staged"):
-            left = _placeholder_count(qms)
-            add("QMapShack placeholders substituted", "pass" if left == 0 else "fail",
-                "clean" if left == 0 else "%d unsubstituted token(s) remain" % left)
+        if Path("configs/QMapShack.conf").is_file():
+            if want(qms, "QMapShack profile staged"):
+                left = _placeholder_count(qms)
+                add("QMapShack placeholders substituted", "pass" if left == 0 else "fail",
+                    "clean" if left == 0 else "%d unsubstituted token(s) remain" % left)
+        else:
+            add("QMapShack profile staged", "warn",
+                "no configs/QMapShack.conf to stage — the settings file was written "
+                "by the provisioner, not copied from a profile")
 
         # The profile is only useful where QMapShack looks for it. A file under
         # the predecessor project's directory reads as staged and is not.
