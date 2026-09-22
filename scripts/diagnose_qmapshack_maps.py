@@ -143,6 +143,8 @@ def main():
         print("   -> the Maps tab will be empty; the sources are not even listed")
         faults.append("mapPath does not name the offline maps directory")
 
+    on_disk_range = [None, None]
+
     print("\n3. MAP SOURCES")
     keys = ini_get(text, "Views\\%s\\map2\\keysKnownMaps" % QMS_VIEW_GROUP) or ""
     sources = sorted(MAPS.glob("*.tms")) if MAPS.is_dir() else []
@@ -177,6 +179,9 @@ def main():
             print("     on disk      z%d-z%d   %s"
                   % (on_disk[0], on_disk[1],
                      ", ".join("z%d:%d" % (z, n) for z, n in sorted(counts.items()))))
+            lo, hi = on_disk_range
+            on_disk_range = [min(x for x in (lo, on_disk[0]) if x is not None),
+                             max(x for x in (hi, on_disk[1]) if x is not None)]
             if on_disk != declared:
                 print("     MISMATCH     declared z%d-z%d, disk has z%d-z%d"
                       % (declared + on_disk))
@@ -201,6 +206,16 @@ def main():
     if zi is not None:
         z = QMS_ZOOM_BASE - int(zi)
         print("   zoom       index %s -> slippy z%d" % (zi, z))
+        lo, hi = on_disk_range
+        if lo is not None and not (lo <= z <= hi):
+            where = "below" if z < lo else "above"
+            print("   -> z%d is %s the tiles on disk (z%d-z%d). QMapShack draws"
+                  % (z, where, lo, hi))
+            print("      NOTHING outside that range, and the \"N tiles pending\"")
+            print("      label freezes rather than clearing -- it skips the code")
+            print("      that recomputes it. ZOOM IN; the map is there.")
+            faults.append("ZOOM: the saved view is at z%d, %s the tiles on disk "
+                          "(z%d-z%d)" % (z, where, lo, hi))
         if centre:
             print("\n5. THE TILES QMAPSHACK WILL ASK FOR AT THAT VIEW")
             for layer_dir in sorted(p for p in (TILES.iterdir() if TILES.is_dir() else [])
@@ -210,18 +225,25 @@ def main():
                            if (layer_dir / str(z) / str(x + dx) / ("%d.png" % (y + dy))).is_file())
                 print("   %-10s z%-3d centre tile %d/%d -> %d of the 9 around it exist"
                       % (layer_dir.name, z, x, y, hits))
-                if hits == 0:
+                if hits == 0 and not any(f.startswith("ZOOM:") for f in faults):
+                    # Suppressed when the zoom is already the known cause --
+                    # one fault, reported once, with the fix that applies.
                     faults.append("%s has no tiles at the view's position and zoom"
                                   % layer_dir.name)
 
     print("\n" + "=" * 74)
     if faults:
+        zoom_only = all(f.startswith("ZOOM:") for f in faults)
         print("FAULTS")
         for f in faults:
-            print("  - %s" % f)
-        print("\nMost of these are fixed by re-running the provisioner's map step and")
-        print("then its 'App profiles + ALE channel plan' step, in that order. Tiles")
-        print("already on disk are skipped, so the map step costs seconds.")
+            print("  - %s" % f.replace("ZOOM: ", ""))
+        if zoom_only:
+            print("\nZOOM IN. Nothing is wrong with the maps and nothing needs")
+            print("re-running -- the view is simply outside the tiles you fetched.")
+        else:
+            print("\nMost of these are fixed by re-running the provisioner's map step")
+            print("and then its 'App profiles + ALE channel plan' step, in that order.")
+            print("Tiles already on disk are skipped, so the map step costs seconds.")
         return 1
     print("Everything the filesystem can confirm looks right. If the canvas is still")
     print("blank, check you have not zoomed out past the fetched range -- below it")

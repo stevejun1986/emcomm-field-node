@@ -118,9 +118,19 @@ It ships in the release archive, so it is on the node already.
 
 **Zooming out past the fetched range gives you a blank canvas, not an error.**
 Tiles cover z10-15 by default. Below z10 QMapShack draws nothing at all, which
-looks exactly like a broken map source. If the canvas is yellow, zoom in before
-concluding anything is wrong. A message reading "N tiles pending" that never
-clears means it is asking for a zoom level that was never downloaded.
+looks exactly like a broken map source. If the canvas is yellow, ZOOM IN before
+concluding anything is wrong.
+
+**And the "N tiles pending" message goes stale down there.** Below the layer's
+minimum zoom QMapShack skips the code that recomputes that label, so the last
+count it ever set stays on screen indefinitely. It reads as work in progress
+when nothing is happening at all. A count that does not change as you pan and
+zoom is a frozen label, not a queue — the tiles are local files, and 22 of them
+would resolve in milliseconds.
+
+Told apart quickly: zoom in two steps. If the map appears, it was the range.
+`scripts/diagnose_qmapshack_maps.py` also reports it — it flags a saved view
+whose zoom falls outside the tiles on disk.
 
 **The grid is UTM, which is what US National Grid is built on.** QMapShack has
 no USNG or MGRS support — the terms appear nowhere in its source, and its grid
