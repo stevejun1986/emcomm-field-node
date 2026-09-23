@@ -209,7 +209,10 @@ with tempfile.TemporaryDirectory() as td:
     # The encoded spelling, because that is the one QSettings writes -- see
     # the view-seeding section below for why writing the other one matters.
     vp = mod["qms_view_prefixes"]()[0]
-    assert vp + "map2\\zoomIndex=%d" % (20 - mod["QMS_DEFAULT_VIEW_ZOOM"]) in text
+    zi = 20 - mod["QMS_DEFAULT_VIEW_ZOOM"]
+    assert vp + "map2\\zoomIndex=%d" % zi in text
+    # And under the pre-map2 group, which is what the field build reads.
+    assert vp + "map\\zoomIndex=%d" % zi in text
     assert vp + "scales=1" in text
     assert "+proj=utm +zone=12" in text
     x, y = decode(text.split(vp + "posFocus=")[1].splitlines()[0])
@@ -433,6 +436,37 @@ before = fresh.read_text()
 mod["configure_qmapshack"](fresh, maps_dir, [one_tms], lat=33.5, lon=-112.05, zoom=12)
 assert fresh.read_text() == before, "a second run changed what the first one seeded"
 print("OK: a fresh profile is seeded once, and a re-run changes nothing")
+
+
+# --- a map is activated under BOTH schemas -------------------------------
+# QMapShack renamed the map-list group from "map" to "map2" and moved
+# activation to a per-key isActive. A build older than that rename ignores
+# every map2 key: the sources still appear in the Maps tab, because
+# loadMapList() scans mapPath and adds what it finds as Unused, but none is
+# active and the canvas stays empty until the operator clicks one.
+#
+# This was found on a node, not in a test -- the maps listed, the view was
+# right, and the operator still had to click. So both spellings are written,
+# and current QMapShack honours the old one: loadMapList() applies
+# map/active after map2, unconditionally, calling activate() per key.
+with tempfile.TemporaryDirectory() as td:
+    maps, files = fixture(td)
+    conf = Path(td) / "QMapShack.conf"
+    mod["configure_qmapshack"](conf, maps, files, 33.45, -112.07)
+    text = conf.read_text()
+    vp = mod["qms_view_prefixes"]()[0]
+    first = mod["qms_map_key"](files[0])
+    assert vp + "map2\\keysKnownMaps=" + first in text, "current schema missing"
+    assert vp + "map2\\" + first + "\\isActive=true" in text, "current schema missing"
+    assert vp + "map\\active=" + first in text, \
+        "nothing activates the map on a build older than the map2 rename"
+    # Exactly one map is activated under either spelling; two raster layers
+    # stack and the upper hides the lower.
+    assert text.count(vp + "map\\active=") == 1
+    for f in files[1:]:
+        k = mod["qms_map_key"](f)
+        assert vp + "map\\active=" + k not in text, "activated more than one map"
+print("OK: the active map is registered under both the old and new schemas")
 
 
 print("\nMAPS: ALL ASSERTIONS PASSED")
