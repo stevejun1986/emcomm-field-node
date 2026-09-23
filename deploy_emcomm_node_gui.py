@@ -303,6 +303,24 @@ QMS_CONF_LEGACY_REL = Path(".config") / "QLandkarteGT" / "QMapShack.conf"
 # Seeding under a plain name is therefore stable across versions.
 QMS_VIEW_GROUP = "View 1"
 
+# QSettings percent-encodes the space when it WRITES a group name, so the
+# view QMapShack saves is "View%201" -- while a literal "View 1" in the file
+# reads back identically, because Qt unescapes on read. Both spellings work
+# going in; only one comes back out.
+#
+# That asymmetry is why every check below has to know both. A check that
+# knows only the literal form cannot see the group QMapShack itself wrote, so
+# on the second run it concludes there is no saved view and seeds one --
+# writing a second posFocus line over the operator's own. Seeding is supposed
+# to happen exactly once, on a profile that has never been opened.
+QMS_VIEW_GROUP_ENC = "View%201"
+
+
+def qms_view_prefixes() -> tuple:
+    """Both spellings of the view group prefix, the one Qt writes first."""
+    return ("Views\\%s\\" % QMS_VIEW_GROUP_ENC,
+            "Views\\%s\\" % QMS_VIEW_GROUP)
+
 # Square (tile-aligned) scales, which is the table that matches a slippy tile
 # pyramid: index i has MPIXEL / 2**(20 - i) metres per pixel, so
 # zoomIndex = 20 - slippy_zoom over the 17 levels it defines (z4..z20).
@@ -498,6 +516,10 @@ def configure_qmapshack(conf: Path, maps_dir: Path, tms_files: list,
     def has(key):
         return any(l.startswith(key + "=") for l in lines)
 
+    def has_view(suffix):
+        """True when EITHER spelling of the view group carries this key."""
+        return any(has(p + suffix) for p in qms_view_prefixes())
+
     # --- 1. the directory the .tms files live in --------------------------
     want_path = str(maps_dir)
     for i, line in enumerate(lines):
@@ -515,11 +537,29 @@ def configure_qmapshack(conf: Path, maps_dir: Path, tms_files: list,
         done["mapPath"] = "added"
 
     # --- 2. the maps themselves, so the first one draws -------------------
-    prefix = "Views\\%s\\map2\\" % QMS_VIEW_GROUP
+    # Two schemas, because which one the installed QMapShack reads depends on
+    # its version and the field build is older than the rename:
+    #
+    #   map2/keysKnownMaps + map2/<key>/isActive   current QMapShack
+    #   map/active = <key>, ...                    what came before it
+    #
+    # A build that predates map2 ignores those keys completely -- the maps
+    # still appear in the Maps tab, because loadMapList() scans mapPath and
+    # adds whatever it finds as Unused, but nothing is activated and the
+    # canvas stays empty until the operator clicks one. That is exactly the
+    # symptom this function exists to prevent, so both are written.
+    #
+    # Current QMapShack reads map/active too: loadMapList() applies it after
+    # map2, unconditionally, calling activate() on each key. The cost is that
+    # nothing ever deletes that legacy group there, so it re-activates on
+    # every launch. On the build this targets it is the native key and gets
+    # rewritten on exit, which is the trade being made.
+    vprefix = qms_view_prefixes()[0]
+    prefix = vprefix + "map2\\"
     present = [f for f in tms_files if f.is_file()]
     if not present:
         done["maps"] = "no .tms files to register"
-    elif has(prefix + "keysKnownMaps"):
+    elif has_view("map2\\keysKnownMaps") or has_view("map\\active"):
         done["maps"] = "kept"
     else:
         keys = [qms_map_key(f) for f in present]
@@ -528,20 +568,24 @@ def configure_qmapshack(conf: Path, maps_dir: Path, tms_files: list,
         adds.append((prefix + keys[0] + "\\isActive", "true"))
         adds.append((prefix + keys[0] + "\\filename",
                      _qms_text_value(str(present[0]))))
+        adds.append((vprefix + "map\\active", keys[0]))
         lines = _canvas_edit(lines, adds)
         done["maps"] = "registered %s as the active map" % present[0].name
 
     # --- 3. the view over the area ----------------------------------------
-    vprefix = "Views\\%s\\" % QMS_VIEW_GROUP
     if lat is None or lon is None:
         done["view"] = "no operating area"
-    elif has(vprefix + "posFocus"):
+    elif has_view("posFocus"):
         done["view"] = "kept"
     else:
         lines = _canvas_edit(lines, [
             (vprefix + "posFocus",
              qsettings_qpointf(math.radians(lon), math.radians(lat))),
             (vprefix + "map2\\zoomIndex", str(QMS_ZOOM_BASE - zoom)),
+            # Same split as the map list above: a build predating map2 reads
+            # the zoom index from map/, and ignoring that opened the canvas
+            # at whatever QMapShack defaulted to rather than over the area.
+            (vprefix + "map\\zoomIndex", str(QMS_ZOOM_BASE - zoom)),
             (vprefix + "scales", str(QMS_SCALES_SQUARE)),
             (vprefix + "grid\\proj", _qms_text_value(utm_proj_for(lat, lon))),
         ])
