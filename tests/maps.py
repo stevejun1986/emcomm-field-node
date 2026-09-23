@@ -31,13 +31,14 @@ os.chdir(REPO)
 # The provisioner builds a GUI at import, so pull out just what is under test.
 SRC = (REPO / "deploy_emcomm_node_gui.py").read_text()
 mod = {"struct": struct, "math": math, "Path": Path, "hashlib": hashlib}
-for name in ("QMS_CONF_REL", "QMS_CONF_LEGACY_REL", "QMS_VIEW_GROUP", "TMS_ZOOM_BASE",
+for name in ("QMS_CONF_REL", "QMS_CONF_LEGACY_REL", "QMS_VIEW_GROUP",
+             "QMS_VIEW_GROUP_ENC", "TMS_ZOOM_BASE",
              "QMS_SCALES_SQUARE", "QMS_ZOOM_BASE", "QMS_DEFAULT_VIEW_ZOOM"):
     m = re.search(r"^%s = .*$" % name, SRC, re.M)
     assert m, "constant %s went missing" % name
     exec(compile(m.group(0), "<prov>", "exec"), mod)
 for fn in ("_qt_ini_escape", "qsettings_qpointf", "utm_proj_for", "tile_zoom_range",
-           "tms_zoom_levels",
+           "tms_zoom_levels", "qms_view_prefixes",
            "_qms_text_value", "qms_map_key", "_canvas_edit", "configure_qmapshack",
            "area_centre"):
     m = re.search(r"^def %s\(.*?(?=\n\ndef |\n\n# |\n\nMAP_LAYERS)" % fn, SRC, re.S | re.M)
@@ -205,10 +206,16 @@ with tempfile.TemporaryDirectory() as td:
     conf = Path(td) / "QMapShack.conf"
     mod["configure_qmapshack"](conf, maps, files, 33.45, -112.07)
     text = conf.read_text()
-    assert "Views\\View 1\\map2\\zoomIndex=%d" % (20 - mod["QMS_DEFAULT_VIEW_ZOOM"]) in text
-    assert "Views\\View 1\\scales=1" in text
+    # The encoded spelling, because that is the one QSettings writes -- see
+    # the view-seeding section below for why writing the other one matters.
+    vp = mod["qms_view_prefixes"]()[0]
+    zi = 20 - mod["QMS_DEFAULT_VIEW_ZOOM"]
+    assert vp + "map2\\zoomIndex=%d" % zi in text
+    # And under the pre-map2 group, which is what the field build reads.
+    assert vp + "map\\zoomIndex=%d" % zi in text
+    assert vp + "scales=1" in text
     assert "+proj=utm +zone=12" in text
-    x, y = decode(text.split("Views\\View 1\\posFocus=")[1].splitlines()[0])
+    x, y = decode(text.split(vp + "posFocus=")[1].splitlines()[0])
     assert abs(math.degrees(y) - 33.45) < 1e-9 and abs(math.degrees(x) + 112.07) < 1e-9
 print("OK: zoom index, scale table, grid projection and centre are all correct")
 
@@ -369,5 +376,97 @@ assert listed != 0, "the diagnostic is gitignored and would not ship"
 attrs = (REPO / ".gitattributes").read_text()
 assert "scripts/" not in attrs, "scripts/ must not be export-ignored"
 print("OK: the diagnostic ships in the release archive")
+
+
+# --- seeding a view happens once, not on every run -----------------------
+# QSettings percent-encodes the space when it WRITES a group name, so what
+# QMapShack saves is "View%201" -- while a literal "View 1" in the file reads
+# back the same, because Qt unescapes on read. Both work going in; only one
+# comes back out.
+#
+# So a check that knows only the literal spelling cannot see the group
+# QMapShack itself wrote. It concludes the profile has no saved view, seeds
+# one, and the operator's own view centre is gone -- on the second run of a
+# provisioner whose whole promise here is to seed and never overwrite.
+prefixes = mod["qms_view_prefixes"]()
+assert prefixes[0] == "Views\\View%201\\", prefixes[0]
+assert prefixes[1] == "Views\\View 1\\", prefixes[1]
+print("OK: both spellings of the view group are known, the written one first")
+
+
+def staged(body: str) -> Path:
+    conf = Path(tempfile.mkdtemp()) / "QMapShack.conf"
+    conf.write_text(body)
+    return conf
+
+
+maps_dir = Path(tempfile.mkdtemp())
+one_tms = maps_dir / "Topo.tms"
+one_tms.write_text("<TMS></TMS>")
+OWN = mod["qsettings_qpointf"](math.radians(-93.2), math.radians(44.9))
+
+# The shape QMapShack leaves behind after it has been opened and closed once.
+after_qmapshack = staged("[Canvas]\nmapPath=\n"
+                         "Views\\View%%201\\posFocus=%s\n"
+                         "Views\\View%%201\\map2\\keysKnownMaps=abc\n" % OWN)
+done = mod["configure_qmapshack"](after_qmapshack, maps_dir, [one_tms],
+                                  lat=33.5, lon=-112.05, zoom=12)
+text = after_qmapshack.read_text()
+assert done["view"] == "kept", "re-seeded over a saved view: %r" % done["view"]
+assert done["maps"] == "kept", "re-registered known maps: %r" % done["maps"]
+assert text.count("posFocus=") == 1, "%d posFocus lines" % text.count("posFocus=")
+assert OWN in text, "the operator's own view centre was overwritten"
+print("OK: a profile QMapShack has saved is left alone on a re-run")
+
+# The older literal spelling still counts as a saved view.
+legacy = staged("[Canvas]\nmapPath=\nViews\\View 1\\posFocus=%s\n" % OWN)
+done = mod["configure_qmapshack"](legacy, maps_dir, [one_tms],
+                                  lat=33.5, lon=-112.05, zoom=12)
+assert done["view"] == "kept", "literal 'View 1' no longer recognised"
+print("OK: the literal spelling is recognised too")
+
+# A profile that has never been opened still gets seeded, in Qt's spelling.
+fresh = staged("[Canvas]\nmapPath=\n")
+done = mod["configure_qmapshack"](fresh, maps_dir, [one_tms],
+                                  lat=33.5, lon=-112.05, zoom=12)
+assert done["view"] == "seeded", done["view"]
+assert "Views\\View%201\\posFocus=" in fresh.read_text(), \
+    "seeded under a spelling Qt does not write"
+before = fresh.read_text()
+mod["configure_qmapshack"](fresh, maps_dir, [one_tms], lat=33.5, lon=-112.05, zoom=12)
+assert fresh.read_text() == before, "a second run changed what the first one seeded"
+print("OK: a fresh profile is seeded once, and a re-run changes nothing")
+
+
+# --- a map is activated under BOTH schemas -------------------------------
+# QMapShack renamed the map-list group from "map" to "map2" and moved
+# activation to a per-key isActive. A build older than that rename ignores
+# every map2 key: the sources still appear in the Maps tab, because
+# loadMapList() scans mapPath and adds what it finds as Unused, but none is
+# active and the canvas stays empty until the operator clicks one.
+#
+# This was found on a node, not in a test -- the maps listed, the view was
+# right, and the operator still had to click. So both spellings are written,
+# and current QMapShack honours the old one: loadMapList() applies
+# map/active after map2, unconditionally, calling activate() per key.
+with tempfile.TemporaryDirectory() as td:
+    maps, files = fixture(td)
+    conf = Path(td) / "QMapShack.conf"
+    mod["configure_qmapshack"](conf, maps, files, 33.45, -112.07)
+    text = conf.read_text()
+    vp = mod["qms_view_prefixes"]()[0]
+    first = mod["qms_map_key"](files[0])
+    assert vp + "map2\\keysKnownMaps=" + first in text, "current schema missing"
+    assert vp + "map2\\" + first + "\\isActive=true" in text, "current schema missing"
+    assert vp + "map\\active=" + first in text, \
+        "nothing activates the map on a build older than the map2 rename"
+    # Exactly one map is activated under either spelling; two raster layers
+    # stack and the upper hides the lower.
+    assert text.count(vp + "map\\active=") == 1
+    for f in files[1:]:
+        k = mod["qms_map_key"](f)
+        assert vp + "map\\active=" + k not in text, "activated more than one map"
+print("OK: the active map is registered under both the old and new schemas")
+
 
 print("\nMAPS: ALL ASSERTIONS PASSED")
