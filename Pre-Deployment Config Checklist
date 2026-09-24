@@ -38,15 +38,49 @@ Verify with the interface connected:
     pactl list short sinks
     pactl list short sources
 
-Set the result in JS8Call -> File -> Settings -> Audio, and in ADEVICE in
-direwolf.conf. Consider a udev rule to pin a stable name if the index moves.
+Set the result in JS8Call -> File -> Settings -> Audio. For Direwolf, declare it
+once in `configs/radio.conf` and let the provisioner write it:
+
+    cp configs/radio.conf.sample configs/radio.conf
+    # ADEVICE=plughw:CARD=Device,DEV=0     <- prefer the card id
+    # ADEVICE=plughw:1,0                   <- index; moves when another USB
+    #                                         audio device is attached
+
+The card id is the name in square brackets in /proc/asound/cards. A generic
+CM108-class interface usually reports "Device", and a second one becomes
+"Device_1" — so check rather than assume when two are attached.
 
 ## 4. PTT Keying (Direwolf)
-The shipped Direwolf config uses PTT CM108, which is common for USB sound-card
-interfaces but has documented reliability issues on Linux.
+Declare it in the same file:
+
+    PTT_DEVICE=/dev/serial/by-id/usb-Silicon_Labs_CP2102_...-if00-port0
+    PTT_METHOD=RTS
+
+**`PTT CM108` does not key a Digirig Mobile.** The Mobile is a USB hub carrying
+two devices: a CM108-based sound card and a CP2102 serial bridge. Its PTT is an
+open-collector switch driven by the RTS line of that serial port, not a CM108
+GPIO — so the chip that makes `PTT CM108` look right is the audio chip, and the
+keying lives somewhere else entirely. That guess is what shipped up to v1.0.2.
+
+**Use the by-id path, not /dev/ttyUSB0.** A GPS receiver and a radio interface
+both enumerate as ttyUSB*, and which one gets ttyUSB0 depends on the order they
+were plugged in. A numbered path can hand gpsd your radio interface, or hand
+Direwolf your GPS. Section 14 makes the same point about the receiver; with both
+attached it stops being theoretical.
+
+**The provisioner never opens either device**, and neither does verification —
+it checks that the paths exist. Opening a serial port asserts its control lines,
+and on an interface whose PTT hangs off one of them, that transmits.
+
+**Do not have a radio connected while the node boots, docks, or is first
+configured.** An RTS-keyed interface can assert on open, and anything that opens
+that port will do it: Direwolf, JS8Call, ion2G, or the dock autostart launching
+one of them (section 8). Get the audio side and the paths settled with no radio
+attached, then connect it and watch it key — into a dummy load — before
+relying on the station.
 
 Confirm PTT actually keys the radio, into a dummy load, before relying on it.
-If CM108 fails, a serial RTS/DTR PTT interface is the usual fallback.
+Nothing in this repository has ever keyed one.
 
 ## 5. Operating Area Map Tiles (scripts/fetch_map_tiles.py)
 Selecting the map step adds an Operating Area screen: a center point in decimal
@@ -292,9 +326,10 @@ everything except radios. Two things about it:
 **Tested means tested.** An entry on that list has been run on a node. Anything
 present but unproven is named as such rather than implied to work.
 
-**The DigiRig audio/PTT interface is NOT among the tested items.** Direwolf's
-config ships with `ADEVICE plughw:1,0` and `PTT CM108` as placeholders, both
-flagged in the file itself, and CM108-style PTT over `/dev/hidraw*` has
-documented reliability problems on Linux. Nothing in this repository has keyed
-a radio. Watch the radio key before relying on the station to transmit — see
-section 8 and the Direwolf chapter of the operator's manual.
+**The Digirig Mobile is NOT among the tested items.** Direwolf's audio device
+and PTT are now declared in `configs/radio.conf` rather than guessed (sections 3
+and 4), and the shipped fallback is still `ADEVICE plughw:1,0` and `PTT CM108` —
+the second of which is the wrong mechanism for this interface. Nothing in this
+repository has keyed a radio. Watch the radio key before relying on the station
+to transmit — see sections 4 and 8, and the Direwolf chapter of the operator's
+manual.

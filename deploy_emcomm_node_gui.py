@@ -156,7 +156,7 @@ except ImportError:
 #: asking git would report "unknown" on precisely the copy an operator runs.
 #: Bump it in the commit that precedes the tag, so a clone of main never
 #: claims to be a release it is ahead of.
-VERSION = "1.0.3"
+VERSION = "1.0.4"
 
 PROJECT         = "emcomm"
 OPERATOR_PREFIX = "EMCOMM"
@@ -2487,15 +2487,148 @@ def optional_gps_time(ctx: Ctx):
             "`chronyc tracking` — Reference ID should read GPS0.", "info")
 
 
+def _read_radio_binding():
+    """(adevice, ptt_device, ptt_method) from configs/radio.conf, or Nones.
+
+    A declaration, never a probe -- the same rule the GPS step follows, and
+    for a sharper reason here. Opening a serial port asserts its control
+    lines, and this interface's PTT is wired to one of them, so a provisioner
+    that swept ttyUSB* looking for a radio could put one on the air.
+
+    configs/radio.conf is gitignored: a by-id path carries the interface's
+    serial number. configs/radio.conf.sample ships instead.
+    """
+    src = Path("configs") / "radio.conf"
+    if not src.is_file():
+        return None, None, None
+    values = {}
+    try:
+        for line in src.read_text(errors="replace").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, val = line.partition("=")
+            values[key.strip().upper()] = val.strip().strip('"').strip("'")
+    except OSError as e:
+        raise RuntimeError("could not read configs/radio.conf: %s" % e)
+    return (values.get("ADEVICE") or None,
+            values.get("PTT_DEVICE") or None,
+            values.get("PTT_METHOD") or None)
+
+
+def _alsa_card_ids() -> list:
+    """Card ids from /proc/asound/cards. Reads a file; opens no device."""
+    ids = []
+    try:
+        for line in Path("/proc/asound/cards").read_text(errors="replace").splitlines():
+            m = re.match(r"\s*(\d+)\s+\[([^\]]+)\]", line)
+            if m:
+                ids.append((int(m.group(1)), m.group(2).strip()))
+    except OSError:
+        pass
+    return ids
+
+
+def direwolf_ptt_line(device, method) -> str:
+    """The Direwolf PTT directive for a declared binding.
+
+    CM108 is a method rather than a device: Direwolf takes the chip's GPIO
+    with an optional /dev/hidraw* path. Everything else is a serial control
+    line and needs the port named first.
+    """
+    method = (method or "RTS").strip()
+    if method.upper() == "CM108":
+        return "PTT CM108" + (" " + device if device else "")
+    return "PTT %s %s" % (device, method)
+
+
 def optional_direwolf(ctx: Ctx):
     with ctx.spin("Installing Direwolf...") as spin_result:
-        status = ctx.sudo("apt", "install", "-y", "direwolf", check=False).returncode
+        proc = ctx.sudo("apt", "install", "-y", "direwolf", check=False)
+        status = proc.returncode
         spin_result.ok = (status == 0)
 
-    if status == 0:
-        ctx.log("[+] Direwolf installed.", "ok")
+    # The configuration is written whenever direwolf is actually present, not
+    # only when this run installed it. apt failing on a node that already has
+    # direwolf -- no network, a held lock, a partly-configured package -- used
+    # to skip the whole config block, leaving no direwolf.conf behind a green
+    # "Direwolf installed" verification row, because that row asks which() and
+    # not apt. The install and the configuration are two things, and one
+    # failing should not silently cancel the other.
+    present = shutil.which("direwolf") is not None
+    if status != 0:
+        # Not "the install failed": a non-zero exit from apt says the
+        # transaction ended badly, not that the package is absent or broken.
+        # apt returns non-zero for a held lock, a failing post-invoke hook, or
+        # a warning it was configured to treat as fatal, on a machine where
+        # the package was already installed and perfectly usable. Report the
+        # status and let the output below say what happened.
+        ctx.log("[!] apt exited %d. That is the transaction's status, not a "
+                "statement about the package — direwolf may be installed and "
+                "fine. apt said:" % status, "warn")
+        # ctx.sudo() captures stdout and stderr into a pipe, and this step used
+        # to read only the return code and drop the rest -- then tell the
+        # operator to check a log that had nothing in it. Say what apt said.
+        output = (proc.stdout or "").strip()
+        if output:
+            for line in output.splitlines()[-12:]:
+                ctx.log("    apt: " + line, "warn")
+        else:
+            ctx.log("    (apt produced no output)", "warn")
+
+    if status == 0 or present:
+        if status == 0:
+            ctx.log("[+] Direwolf installed.", "ok")
+        else:
+            ctx.log("[*] direwolf is already on PATH, so its configuration is written "
+                    "anyway — the failure above did not remove it.", "info")
         direwolf_config_dir = ctx.home / ".config" / "direwolf"
         direwolf_config_dir.mkdir(parents=True, exist_ok=True)
+
+        adevice, ptt_device, ptt_method = _read_radio_binding()
+
+        # Read-only reconnaissance, printed to help the operator fill the file
+        # in. /proc/asound/cards is a file read and by-id is a directory
+        # listing; neither opens a device, which matters because opening this
+        # one keys a transmitter.
+        cards = _alsa_card_ids()
+        if cards:
+            ctx.log("[*] Sound cards present: " + ", ".join(
+                "%d [%s]" % (n, i) for n, i in cards), "info")
+        by_id = sorted(Path("/dev/serial/by-id").glob("*")) \
+            if Path("/dev/serial/by-id").is_dir() else []
+        if by_id:
+            ctx.log("[*] Serial interfaces present: " + ", ".join(
+                p.name for p in by_id), "info")
+
+        if adevice:
+            audio_block = ("# Declared in configs/radio.conf.\nADEVICE %s" % adevice)
+            card_ids = [i for _n, i in cards]
+            m = re.search(r"CARD=([^,]+)", adevice)
+            if m and card_ids and m.group(1) not in card_ids:
+                ctx.log(f"[!] configs/radio.conf names sound card {m.group(1)!r}, which "
+                        f"is not present ({', '.join(card_ids) or 'no cards'}). Writing it "
+                        f"anyway — it will work once the interface is attached.", "warn")
+        else:
+            audio_block = ("# --- AUDIO DEVICE — UNVERIFIED PLACEHOLDER ---\n"
+                           "# ADEVICE was not declared, so this is a GUESS. Run `arecord -l`,\n"
+                           "# then set ADEVICE in configs/radio.conf.\n"
+                           "ADEVICE plughw:1,0")
+
+        if ptt_device or (ptt_method or "").upper() == "CM108":
+            ptt_block = ("# Declared in configs/radio.conf.\n"
+                         + direwolf_ptt_line(ptt_device, ptt_method))
+            if ptt_device and not Path(ptt_device).exists():
+                ctx.log(f"[!] configs/radio.conf names PTT device {ptt_device}, which is "
+                        f"not present. Writing it anyway — it will bind when the "
+                        f"interface is attached.", "warn")
+        else:
+            ptt_block = ("# --- PTT — UNVERIFIED PLACEHOLDER ---\n"
+                         "# No configs/radio.conf, so this is a GUESS, and for a Digirig\n"
+                         "# Mobile it is the wrong one: its PTT is an open-collector switch\n"
+                         "# on the CP2102 serial port's RTS line, not a CM108 GPIO. See\n"
+                         "# configs/radio.conf.sample.\n"
+                         "PTT CM108")
 
         (direwolf_config_dir / "direwolf.conf").write_text(f"""# --- {OPERATOR_PREFIX} Direwolf Base Config ---
 # Callsign pulled from Node ID set during provisioning.
@@ -2504,17 +2637,11 @@ def optional_direwolf(ctx: Ctx):
 # is a real, currently-licensed callsign.
 MYCALL {ctx.node_id}
 
-# --- AUDIO DEVICE — UNVERIFIED PLACEHOLDER ---
-# Card index (plughw:1,0) is a GUESS. Verify with `arecord -l` against
-# your actual DigiRig before relying on this.
-ADEVICE plughw:1,0
+{audio_block}
 CHANNEL 0
 MODEM 1200
 
-# --- PTT — UNVERIFIED, KNOWN LINUX COMPATIBILITY ISSUES ---
-# DigiRig's CM108-style PTT via /dev/hidraw* has documented reliability
-# issues on Linux. Verify PTT actually keys the radio before field use.
-PTT CM108
+{ptt_block}
 
 AGWPORT 8000
 KISSPORT 8001
@@ -2524,9 +2651,25 @@ KISSPORT 8001
         home_symlink.unlink(missing_ok=True)
         home_symlink.symlink_to(direwolf_config_dir / "direwolf.conf")
         ctx.log(f"[+] Symlinked to {ctx.home}/direwolf.conf for Direwolf's default search path.", "ok")
-        ctx.log("[!] ADEVICE/PTT are UNVERIFIED placeholders — confirm against real hardware.", "warn")
+
+        if adevice and (ptt_device or (ptt_method or "").upper() == "CM108"):
+            ctx.log(f"[+] Radio interface declared: audio {adevice}, "
+                    f"{direwolf_ptt_line(ptt_device, ptt_method)}.", "ok")
+            ctx.log("[!] Declared, not proven. Nothing here has keyed a radio — watch it "
+                    "key before relying on the station to transmit.", "warn")
+        elif Path("configs/radio.conf").is_file():
+            ctx.log("[!] configs/radio.conf is present but does not declare both ADEVICE "
+                    "and PTT_DEVICE, so those are still placeholders and Direwolf will "
+                    "not work as shipped. Fill the empty values in and re-run this step. "
+                    "See checklist sections 3 and 4.", "warn")
+        else:
+            ctx.log("[!] No configs/radio.conf — ADEVICE/PTT left as placeholders and "
+                    "Direwolf will not work as shipped. Copy configs/radio.conf.sample, "
+                    "fill it in, and re-run this step. See checklist sections 3 and 4.",
+                    "warn")
     else:
-        ctx.log("[!] Direwolf install failed — check log above.", "err")
+        ctx.log("[!] direwolf is not on PATH either, so no configuration was written. "
+                "Fix the install and re-run this step.", "err")
 
 
 #: The mesh -> GPX bridge, written to the node by the Meshtastic step when
@@ -4044,6 +4187,51 @@ def verify_deployment(ctx: Ctx, selected_ids: set) -> list:
                 add("Direwolf MYCALL set to this node", "fail",
                     "MYCALL=%r, expected %r" % (mycall, ctx.node_id))
         want(home / "direwolf.conf", "Direwolf config discoverable from $HOME", hard=False)
+
+        # Deliberately never opens the PTT device. This interface keys a
+        # transmitter from a serial control line, so a check that opened the
+        # port to confirm it works could put a radio on the air -- the same
+        # reason the GPS row asks chronyd instead of the receiver.
+        adevice, ptt_device, ptt_method = _read_radio_binding()
+        if adevice:
+            card_ids = [i for _n, i in _alsa_card_ids()]
+            m = re.search(r"CARD=([^,]+)", adevice)
+            present = (m.group(1) in card_ids) if (m and card_ids) else None
+            add("Direwolf audio device declared", "pass" if present is not False else "warn",
+                adevice if present is not False
+                else "%s names a card that is not attached (%s)" % (adevice, ", ".join(card_ids)))
+        else:
+            add("Direwolf audio device declared", "warn",
+                ("configs/radio.conf declares no ADEVICE" if Path("configs/radio.conf").is_file()
+                 else "no configs/radio.conf")
+                + " — ADEVICE is the shipped guess plughw:1,0 and is very likely wrong "
+                  "for your interface")
+
+        if ptt_device:
+            here = Path(ptt_device).exists()
+            # "declared, never observed" rather than a row of its own that can
+            # only ever warn: a check that can never pass teaches people to
+            # skim past warnings, which is the opposite of what this screen is
+            # for. The caveat belongs on the row it qualifies.
+            add("Direwolf PTT device declared", "pass" if here else "warn",
+                (direwolf_ptt_line(ptt_device, ptt_method)
+                 + " — declared and present; no node has observed it key a radio")
+                if here
+                else "%s is not present — attach the interface, or fix the path" % ptt_device)
+            if ptt_device.startswith("/dev/tty"):
+                add("Direwolf PTT device named by a stable path", "warn",
+                    "%s is a numbered path; a GPS receiver and a radio interface both "
+                    "enumerate as ttyUSB* and swap on plug order. Use /dev/serial/by-id/"
+                    % ptt_device)
+        elif (ptt_method or "").upper() == "CM108":
+            add("Direwolf PTT device declared", "pass",
+                "PTT CM108 — declared; no node has observed it key a radio")
+        else:
+            add("Direwolf PTT device declared", "warn",
+                ("configs/radio.conf declares no PTT_DEVICE" if Path("configs/radio.conf").is_file()
+                 else "no configs/radio.conf")
+                + " — PTT is the shipped guess 'CM108', which does not key a Digirig "
+                  "Mobile: its PTT is on the CP2102's RTS line")
 
     if "meshtastic" in selected_ids:
         want(home / ".local" / "bin" / "meshtastic", "Meshtastic wrapper on PATH")
