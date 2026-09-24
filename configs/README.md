@@ -55,7 +55,7 @@ Substitute these tokens; the provisioner replaces them at build time:
 | `MYCALL_PLACEHOLDER` | the callsign entered at the prompt |
 | `HOME_PLACEHOLDER` | the provisioning user's `$HOME` |
 
-Leave these **empty** rather than tokenised — nothing substitutes them, and a
+Leave these **empty** rather than tokenized — nothing substitutes them, and a
 literal token would be used as a real value:
 
 * `MyGrid` — a grid square is transmitted position data; let each operator set it

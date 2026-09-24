@@ -5,7 +5,7 @@
 
 Nothing here touches the network. urlopen and sleep are replaced with
 recorders, so the assertions are about the client's manners: that it paces
-every attempt, tells "no such tile" apart from "slow down", honours
+every attempt, tells "no such tile" apart from "slow down", honors
 Retry-After, and eventually stops rather than grinding.
 """
 import sys, urllib.error, importlib.util, tempfile, io
@@ -47,7 +47,7 @@ print("OK: a successful fetch is paced once, before the request")
 r = run([http_error(429, {"Retry-After": "7"}), Resp()])
 assert r == "ok", r
 assert SLEPT == [0.15, 7.0, 0.15], SLEPT
-print("OK: 429 then success — Retry-After honoured, and the retry is paced too")
+print("OK: 429 then success — Retry-After honored, and the retry is paced too")
 print("    slept: %s" % SLEPT)
 
 # --- "no such tile" is not "slow down" ---------------------------------
@@ -77,7 +77,7 @@ assert run([http_error(403)]) == "fail"
 assert SLEPT == [0.15], "403 is not retryable: %s" % SLEPT
 print("OK: 403 is permanent — not retried, not mistaken for throttling")
 
-# --- the treat-everything-as-fail behaviour is gone --------------------
+# --- the treat-everything-as-fail behavior is gone --------------------
 for code, expect in ((404, "missing"), (429, "throttled"), (503, "throttled"), (403, "fail")):
     got = run([http_error(code)] * f.MAX_ATTEMPTS)
     assert got == expect, (code, got, expect)

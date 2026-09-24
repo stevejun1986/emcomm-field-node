@@ -153,7 +153,7 @@ whose map step has not run. The waypoints load regardless.
 
 **Peer positions may be approximate.** A position arriving over the air is
 quantized by the channel's `positionPrecision`; on the mesh tested, at precision
-13, two nodes two kilometres apart reported identical coordinates to seven decimal
+13, two nodes two kilometers apart reported identical coordinates to seven decimal
 places. Only the local node's own position arrives at full GPS precision.
 
 ## Dock trigger: verifying it actually fires

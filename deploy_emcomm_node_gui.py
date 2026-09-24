@@ -71,8 +71,8 @@ Use these tokens instead; they are substituted at provisioning time:
 
 LICENSING
 Transmitting with JS8Call, ion2G HF ALE, Direwolf/APRS or on amateur
-DMR requires a valid amateur radio licence. Receive-only use does not.
-GMRS requires a GMRS licence; FRS, MURS and Meshtastic (915 MHz ISM) do
+DMR requires a valid amateur radio license. Receive-only use does not.
+GMRS requires a GMRS license; FRS, MURS and Meshtastic (915 MHz ISM) do
 not. The callsign entered at provisioning is written into the JS8Call
 profile — set a real, licensed callsign before transmitting.
 
@@ -247,16 +247,16 @@ def is_unmodified_sample(spec: dict) -> bool:
 def fetch_passes(spec: dict, tf) -> list:
     """[(description, bbox, (min_zoom, max_zoom))] for one operating area.
 
-    An area given as a centre and radius is fetched in two passes: full street
+    An area given as a center and radius is fetched in two passes: full street
     detail in the inner ring where a node actually navigates, and orientation
     zoom out to the full radius. Fetching the whole radius at street zoom is
     what turns a 150-mile area into a multi-hour, multi-gigabyte download —
     roughly 350,000 tiles against a public USGS endpoint.
 
-    A hand-written rectangle has no centre, so it gets a single pass.
+    A hand-written rectangle has no center, so it gets a single pass.
     """
-    centre = spec.get("center") or {}
-    lat, lon, radius = centre.get("lat"), centre.get("lon"), spec.get("radius_miles")
+    center = spec.get("center") or {}
+    lat, lon, radius = center.get("lat"), center.get("lon"), spec.get("radius_miles")
     if tf and lat is not None and lon is not None and radius:
         detail_r = min(float(spec.get("detail_radius_miles", tf.DETAIL_RADIUS_MILES)),
                        float(radius))
@@ -283,7 +283,7 @@ MAP_LAYERS = (
 # QMapShack settings
 #
 # QMapShack stores its settings through QSettings, which on Linux is an INI
-# file under the organisation name the application sets. QMapShack's main.cpp
+# file under the organization name the application sets. QMapShack's main.cpp
 # sets that to "QLandkarte", so the file is:
 #
 #     ~/.config/QLandkarte/QMapShack.conf
@@ -322,7 +322,7 @@ def qms_view_prefixes() -> tuple:
             "Views\\%s\\" % QMS_VIEW_GROUP)
 
 # Square (tile-aligned) scales, which is the table that matches a slippy tile
-# pyramid: index i has MPIXEL / 2**(20 - i) metres per pixel, so
+# pyramid: index i has MPIXEL / 2**(20 - i) meters per pixel, so
 # zoomIndex = 20 - slippy_zoom over the 17 levels it defines (z4..z20).
 QMS_SCALES_SQUARE = 1
 QMS_ZOOM_BASE = 20
@@ -378,8 +378,8 @@ def _qt_ini_escape(raw: bytes) -> tuple:
 def qsettings_qpointf(x: float, y: float) -> str:
     """The exact INI text QSettings writes for QPointF(x, y).
 
-    Most of QMapShack's settings are plain text. The view centre is not: it is
-    a QPointF serialised as a binary QVariant, type id 26, two big-endian
+    Most of QMapShack's settings are plain text. The view center is not: it is
+    a QPointF serialized as a binary QVariant, type id 26, two big-endian
     doubles, escaped into the INI. There is no text form QMapShack will read
     instead -- QVariant::toPointF() on a string yields (0, 0).
     """
@@ -596,12 +596,12 @@ def configure_qmapshack(conf: Path, maps_dir: Path, tms_files: list,
     return done
 
 
-def area_centre(spec: dict) -> tuple:
+def area_center(spec: dict) -> tuple:
     """(lat, lon) for an operating area given either way, or None."""
-    centre = spec.get("center") or {}
-    if centre.get("lat") is not None and centre.get("lon") is not None:
+    center = spec.get("center") or {}
+    if center.get("lat") is not None and center.get("lon") is not None:
         try:
-            return float(centre["lat"]), float(centre["lon"])
+            return float(center["lat"]), float(center["lon"])
         except (TypeError, ValueError):
             return None
     try:
@@ -667,7 +667,7 @@ def rewrite_hosts(lines: list, hostname: str) -> list:
     return out
 
 
-class ProvisioningCancelled(Exception):
+class ProvisioningCanceled(Exception):
     """Raised between steps when the user hits Cancel."""
 
 
@@ -880,7 +880,7 @@ class Ctx:
     node_id: str
     askpass: AskpassSession
     log: Callable[[str, str], None]          # log(message, level)
-    cancel_check: Callable[[], None]          # raises ProvisioningCancelled
+    cancel_check: Callable[[], None]          # raises ProvisioningCanceled
     spin_start: Callable[[str], None]         # begin an animated "in progress" log line
     spin_stop: Callable[[bool], None]         # resolve it to a check mark / cross
     spin_progress: Callable[[str], None]      # update the trailing text of the active spin line
@@ -1015,7 +1015,7 @@ class Ctx:
         Almost everything that goes through sudo here is a package
         transaction -- apt, dpkg, debconf -- and killing one part-way leaves
         dpkg needing `dpkg --configure -a` before anything else can install.
-        A cancelled run that also breaks the package manager is a worse
+        A canceled run that also breaks the package manager is a worse
         outcome than one that takes another thirty seconds to stop.
 
         `make install` is the other sudo caller, and writing half a SatDump
@@ -1461,7 +1461,7 @@ Agree these with your group BEFORE deployment. Every node on the net
 must match region, preset and channel settings or they will not hear
 each other.
 
-    Band    : 915 MHz ISM (US) - no amateur licence required
+    Band    : 915 MHz ISM (US) - no amateur license required
     Preset  : LONG_FAST (default; longest range, lowest data rate)
     Channel : your group's agreed channel name
 
@@ -1656,7 +1656,7 @@ fetched area. The waypoints are still there.
 A NOTE ON PRECISION. A peer's position may be a mesh broadcast rather than
 a GPS reading, and broadcasts are quantized by the channel's
 positionPrecision. On the mesh above, at precision 13, two nodes two
-kilometres apart reported identical coordinates to seven decimal places.
+kilometers apart reported identical coordinates to seven decimal places.
 Treat a peer waypoint as "roughly here", not as a survey point -- the
 node's own position is the only one that arrives at full precision.
 
@@ -1775,7 +1775,7 @@ def step_system_packages(ctx: Ctx):
         wine_ok = ctx.run(["wineboot", "--init"], check=False).returncode == 0
         spin_result.ok = wine_ok
     if not wine_ok:
-        ctx.log("[!] wineboot --init failed — the Wine prefix is not initialised, and "
+        ctx.log("[!] wineboot --init failed — the Wine prefix is not initialized, and "
                 "ion2G will not run until it is.", "warn")
 
 
@@ -1849,7 +1849,7 @@ def step_qlog_ion2g(ctx: Ctx):
             ctx.sudo("flatpak", "remote-add", "--if-not-exists",
                      "flathub", "https://flathub.org/repo/flathub.flatpakrepo")
             # Through sudo. The remote above is a system installation, and a
-            # user-invoked install against it needs a polkit authorisation that
+            # user-invoked install against it needs a polkit authorization that
             # a GUI with no agent cannot obtain — the failure reads "Flatpak
             # system operation Deploy not allowed for user". finalize() also
             # looks for the exported .desktop under /var/lib/flatpak, which
@@ -1940,7 +1940,7 @@ def step_maps_fetch(ctx: Ctx):
 
         passes = fetch_passes(spec, tf)
         if not passes:
-            ctx.log(f"[!] {area_path} has neither a centre/radius nor all four of "
+            ctx.log(f"[!] {area_path} has neither a center/radius nor all four of "
                     f"north/south/east/west — skipped.", "err")
             fail_count += 1
             continue
@@ -2073,7 +2073,7 @@ def step_config_profiles(ctx: Ctx):
     legacy_conf = ctx.home / QMS_CONF_LEGACY_REL
     if legacy_conf.is_file():
         ctx.log(f"[!] {legacy_conf} exists and QMapShack does not read it — earlier "
-                f"runs of this provisioner staged there. Anything you customised in "
+                f"runs of this provisioner staged there. Anything you customized in "
                 f"it needs moving to {qms_conf} by hand; nothing is copied "
                 f"automatically, because a stale profile would overwrite a good one.",
                 "warn")
@@ -2191,7 +2191,7 @@ def step_config_profiles(ctx: Ctx):
     # node unless a group supplies a profile -- mapPath was never written and
     # the maps this provisioner had just spent an hour downloading were
     # invisible to the application that exists to draw them.
-    centres = []
+    centers = []
     for area_path in sorted(AREA_DIR.glob("*.json")):
         try:
             spec = json.loads(area_path.read_text(errors="replace"))
@@ -2199,13 +2199,13 @@ def step_config_profiles(ctx: Ctx):
             continue
         if is_unmodified_sample(spec):
             continue
-        centre = area_centre(spec)
-        if centre:
-            centres.append(centre)
+        center = area_center(spec)
+        if center:
+            centers.append(center)
     # Several areas: the midpoint of them all, which puts the first view
-    # somewhere every area is reachable from rather than favouring one.
-    lat = sum(c[0] for c in centres) / len(centres) if centres else None
-    lon = sum(c[1] for c in centres) / len(centres) if centres else None
+    # somewhere every area is reachable from rather than favoring one.
+    lat = sum(c[0] for c in centers) / len(centers) if centers else None
+    lon = sum(c[1] for c in centers) / len(centers) if centers else None
 
     result = configure_qmapshack(
         qms_conf, ctx.data_dir / "Offline_Maps",
@@ -2231,13 +2231,13 @@ def step_config_profiles(ctx: Ctx):
                 "warn")
 
     if result["view"] == "no operating area":
-        ctx.log("[!] No operating area, so QMapShack keeps its built-in view centre "
+        ctx.log("[!] No operating area, so QMapShack keeps its built-in view center "
                 "(12E 49N, central Europe) and will open on empty canvas. Define an "
                 "area and re-run this step.", "warn")
     elif result["view"] == "kept":
-        ctx.log("[+] QMapShack already has a saved view centre — left as it is.", "ok")
+        ctx.log("[+] QMapShack already has a saved view center — left as it is.", "ok")
     else:
-        ctx.log(f"[+] QMapShack first view centred on {lat:.4f}, {lon:.4f} at zoom "
+        ctx.log(f"[+] QMapShack first view centered on {lat:.4f}, {lon:.4f} at zoom "
                 f"{QMS_DEFAULT_VIEW_ZOOM}, grid set to the area's UTM zone.", "ok")
         ctx.log("[*] QMapShack overwrites this file when it closes, so all of this is "
                 "a starting point, not a lock — move the view or switch layers and it "
@@ -2411,7 +2411,7 @@ def optional_gps_time(ctx: Ctx):
     """Give the node a time source that survives losing the network.
 
     Without this, chrony's only configured sources are internet NTP pools. A
-    deployed node cannot reach them, never synchronises, and `chronyc tracking`
+    deployed node cannot reach them, never synchronizes, and `chronyc tracking`
     reports "Not synchronised" indefinitely -- which matters most to JS8Call,
     whose timed transmit windows want the clock inside about a second.
     """
@@ -2846,7 +2846,7 @@ def node_position(node: dict):
     itself treats 0/0 as unset (`if position.latitude_i != 0 and ...`),
     so this does too. A node sitting on Null Island is indistinguishable
     from one with no fix, which is the library's convention, not a
-    judgement about the Gulf of Guinea.
+    judgment about the Gulf of Guinea.
     """
     pos = node.get("position") or {}
     lat = pos.get("latitude")
@@ -3399,7 +3399,7 @@ def optional_dump1090(ctx: Ctx):
 
     So seeding it false does not install "a service that does not start at
     boot" -- it installs a service that cannot be started at all. Boot
-    behaviour is a separate switch: dh_installinit runs `update-rc.d
+    behavior is a separate switch: dh_installinit runs `update-rc.d
     dump1090-mutability defaults` regardless of debconf, so the runlevel links
     are what have to be removed.
 
@@ -3984,7 +3984,7 @@ def _dump1090_default(key: str) -> Optional[str]:
     """One value out of /etc/default/dump1090-mutability.
 
     The init script sources this file, so what is in it is what actually
-    decides behaviour -- and two of its values decide whether ADS-B works at
+    decides behavior -- and two of its values decide whether ADS-B works at
     all. START_DUMP1090 gates every start; DUMP1090_USER is who the daemon
     runs as, and therefore who needs access to the dongle. Both the install
     step and the verification pass need to read them, so the parsing lives in
@@ -4179,8 +4179,8 @@ def verify_deployment(ctx: Ctx, selected_ids: set) -> list:
 
         has_view = "posFocus=" in conf_text
         add("QMapShack opens on the operating area", "pass" if has_view else "warn",
-            "view centre set" if has_view
-            else "no view centre — QMapShack will open on its built-in centre "
+            "view center set" if has_view
+            else "no view center — QMapShack will open on its built-in center "
                  "in central Europe, where this node has no tiles")
 
         want(home / ".local" / "share" / "CHIRP" / "analog_channels.csv",
@@ -4666,7 +4666,7 @@ class ProvisionerGUI(tk.Tk):
         self.frames: dict = {}
         self.selected_ids: set = set()
         self.check_results: list = []
-        self.run_outcome: str = "unknown"     # completed | failed | cancelled
+        self.run_outcome: str = "unknown"     # completed | failed | canceled
         self.failed_steps: list = []          # steps that raised, by label
         self.area_file = None                 # written by the area screen, if shown
 
@@ -4842,7 +4842,7 @@ class ProvisionerGUI(tk.Tk):
         ttk.Label(f, text="Operating Area",
                   font=("TkDefaultFont", 14, "bold")).pack(anchor="w")
         ttk.Label(f,
-                  text=("Offline map tiles are fetched around a centre point. Full street "
+                  text=("Offline map tiles are fetched around a center point. Full street "
                         "detail is kept within the inner ring where a node actually "
                         "navigates; the rest of the radius is covered at orientation zoom. "
                         "Fetching the whole radius at street zoom is what turns a wide area "
@@ -4851,13 +4851,13 @@ class ProvisionerGUI(tk.Tk):
 
         form = ttk.Frame(f)
         form.pack(fill="x")
-        ttk.Label(form, text="Centre latitude:").grid(row=0, column=0, sticky="w", pady=4)
+        ttk.Label(form, text="Center latitude:").grid(row=0, column=0, sticky="w", pady=4)
         self.lat_var = tk.StringVar()
         ttk.Entry(form, textvariable=self.lat_var, width=14).grid(row=0, column=1, sticky="w", padx=8)
         ttk.Label(form, text="decimal degrees, e.g. 39.00 (N positive)",
                   foreground="#888888").grid(row=0, column=2, sticky="w")
 
-        ttk.Label(form, text="Centre longitude:").grid(row=1, column=0, sticky="w", pady=4)
+        ttk.Label(form, text="Center longitude:").grid(row=1, column=0, sticky="w", pady=4)
         self.lon_var = tk.StringVar()
         ttk.Entry(form, textvariable=self.lon_var, width=14).grid(row=1, column=1, sticky="w", padx=8)
         ttk.Label(form, text="decimal degrees, e.g. -77.00 (W negative)",
@@ -4893,11 +4893,11 @@ class ProvisionerGUI(tk.Tk):
         for var in (self.lat_var, self.lon_var, self.radius_var):
             var.trace_add("write", lambda *_a: self._update_area_estimate())
 
-    def _parse_centre(self):
+    def _parse_center(self):
         """(lat, lon) rounded to 2 dp, or None with the reason in area_error.
 
         More precision is accepted and rounded rather than rejected — 2 dp is
-        about 1.1 km, ample for a map centre, and refusing 39.123 would only
+        about 1.1 km, ample for a map center, and refusing 39.123 would only
         annoy someone reading coordinates off a GPS.
         """
         try:
@@ -4916,15 +4916,15 @@ class ProvisionerGUI(tk.Tk):
 
     def _update_area_estimate(self, *_a):
         self.area_error.configure(text="")
-        centre = self._parse_centre()
-        if centre is None:
-            self.area_estimate.configure(text="Enter a centre to see the download estimate.")
+        center = self._parse_center()
+        if center is None:
+            self.area_estimate.configure(text="Enter a center to see the download estimate.")
             return
-        lat, lon = centre
+        lat, lon = center
         tf = load_tile_fetcher()
         if tf is None:
             self.area_estimate.configure(
-                text=f"centre {lat:.2f}, {lon:.2f}   (estimate unavailable — "
+                text=f"center {lat:.2f}, {lon:.2f}   (estimate unavailable — "
                      f"{TILE_FETCHER} could not be loaded)")
             return
         radius = self.radius_var.get()
@@ -4942,17 +4942,17 @@ class ProvisionerGUI(tk.Tk):
                      f"   ~{mb:,.0f} MB   ~{mins:,.0f} min")
         layers = " + ".join(layer for layer, _tms, _title in MAP_LAYERS)
         self.area_estimate.configure(
-            text=f"centre {lat:.2f}, {lon:.2f} — radius {radius} mi   "
+            text=f"center {lat:.2f}, {lon:.2f} — radius {radius} mi   "
                  f"({layers}; every figure covers both)\n" + "\n".join(lines))
 
     def _on_area_continue(self):
-        centre = self._parse_centre()
-        if centre is None:
+        center = self._parse_center()
+        if center is None:
             if not self.area_error.cget("text"):
                 self.area_error.configure(
-                    text="Enter a centre latitude and longitude in decimal degrees.")
+                    text="Enter a center latitude and longitude in decimal degrees.")
             return
-        lat, lon = centre
+        lat, lon = center
         radius = self.radius_var.get()
         node = hostname_from_node_id(self.node_id_var.get().strip()) or "node"
         tf = load_tile_fetcher()
@@ -5153,7 +5153,7 @@ class ProvisionerGUI(tk.Tk):
         btns.pack(fill="x", pady=(10, 0))
         self.cancel_btn = ttk.Button(btns, text="Cancel", command=self._on_cancel)
         self.cancel_btn.pack(side="left")
-        # Re-labelled "Continue \u2192" once the run ends: from then on this screen
+        # Re-labeled "Continue \u2192" once the run ends: from then on this screen
         # is the log archive, reachable from both later screens.
         self.close_btn = ttk.Button(btns, text="Close", command=self._on_run_screen_forward,
                                      state="disabled")
@@ -5300,8 +5300,8 @@ class ProvisionerGUI(tk.Tk):
         ran = [c.label for c in COMPONENTS if c.id in self.selected_ids]
         skipped = len(COMPONENTS) - len(ran)
 
-        if self.run_outcome == "cancelled":
-            title, tag = "Provisioning cancelled", "warn"
+        if self.run_outcome == "canceled":
+            title, tag = "Provisioning canceled", "warn"
         elif self.run_outcome == "failed" or failed:
             title, tag = "Provisioning finished with problems", "err"
         elif warned:
@@ -5412,7 +5412,7 @@ class ProvisionerGUI(tk.Tk):
     # -- worker thread ------------------------------------------------------
     def _cancel_check(self):
         if self.cancel_event.is_set():
-            raise ProvisioningCancelled()
+            raise ProvisioningCanceled()
 
     def _queue_log(self, message: str, level: str = "info"):
         self.msg_queue.put(("log", message, level))
@@ -5432,7 +5432,7 @@ class ProvisionerGUI(tk.Tk):
                 # must not cost the operator the twelve that would have worked.
                 try:
                     comp.fn(ctx)
-                except ProvisioningCancelled:
+                except ProvisioningCanceled:
                     raise                       # a cancel is not a step failure
                 except subprocess.CalledProcessError as e:
                     failed.append(comp.label)
@@ -5450,8 +5450,8 @@ class ProvisionerGUI(tk.Tk):
             self.failed_steps = list(failed)
             self.msg_queue.put(("done", not failed, ctx.node_id))
             self._queue_verification(ctx, selected_ids)
-        except ProvisioningCancelled:
-            self.msg_queue.put(("cancelled", None, None))
+        except ProvisioningCanceled:
+            self.msg_queue.put(("canceled", None, None))
             # Still verify: what did land before the stop is the useful part.
             self._queue_verification(ctx, selected_ids)
         except Exception as e:      # noqa: BLE001 — something outside any step
@@ -5562,10 +5562,10 @@ class ProvisionerGUI(tk.Tk):
                         self.run_outcome = "failed"
                         self.step_label.configure(text="Provisioning failed — see log")
                     self._begin_verification()
-                elif kind == "cancelled":
-                    self.run_outcome = "cancelled"
-                    self.step_label.configure(text="Cancelled")
-                    self._append_log("=== Cancelled by user ===", "warn")
+                elif kind == "canceled":
+                    self.run_outcome = "canceled"
+                    self.step_label.configure(text="Canceled")
+                    self._append_log("=== Canceled by user ===", "warn")
                     self.cancel_btn.configure(state="disabled")
                     self.close_btn.configure(state="normal")
                     self._begin_verification()

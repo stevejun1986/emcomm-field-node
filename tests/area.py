@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Operating-area screen: centre/radius input, the estimate, and the file it writes.
+"""Operating-area screen: center/radius input, the estimate, and the file it writes.
 
     python3 tests/area.py            # on a desktop session
     xvfb-run -a python3 tests/area.py
@@ -37,7 +37,7 @@ for lat, lon in ((84.9, 179.9), (-84.9, -179.9), (89.0, 0.0)):
     tf.validate_area(dict(box))          # exits the process if invalid
     assert -85 <= box["south"] < box["north"] <= 85, box
     assert -180 <= box["west"] < box["east"] <= 180, box
-print("OK: extreme centres clamp to a valid box instead of an unusable one")
+print("OK: extreme centers clamp to a valid box instead of an unusable one")
 
 # --- tiering -------------------------------------------------------------
 for radius in (50, 75, 150):
@@ -82,9 +82,9 @@ assert "area" in app.frames and app.frames["area"].winfo_manager(), "area screen
 print("OK: area screen appears when the map step is checked")
 
 app._on_area_continue()
-assert "Enter a centre" in app.area_error.cget("text"), app.area_error.cget("text")
-assert not app.frames["sudo"].winfo_manager(), "must not advance without a centre"
-print("OK: blank centre blocked")
+assert "Enter a center" in app.area_error.cget("text"), app.area_error.cget("text")
+assert not app.frames["sudo"].winfo_manager(), "must not advance without a center"
+print("OK: blank center blocked")
 
 app.lat_var.set("91.0"); app.lon_var.set("-77.0"); app._on_area_continue()
 assert "between -85 and 85" in app.area_error.cget("text"), app.area_error.cget("text")
@@ -98,7 +98,7 @@ app.update_idletasks()
 est = app.area_estimate.cget("text")
 assert "39.12" in est and "-77.99" in est, est
 assert "radius 75 mi" in est and "total" in est, est
-# every row already counts all layers; the sum must not be labelled as if the
+# every row already counts all layers; the sum must not be labeled as if the
 # rows above it were per-layer
 assert "both layers" not in est, est
 rows = [l for l in est.splitlines() if "tiles" in l and "total" not in l]
@@ -124,7 +124,7 @@ with tempfile.TemporaryDirectory() as td:
         assert k in spec, spec
     tf.validate_area(dict(spec))
     assert app.frames["sudo"].winfo_manager(), "should advance to sudo after writing"
-    print("OK: wrote %s — centre, radius, detail ring and a valid bbox" % written[0].name)
+    print("OK: wrote %s — center, radius, detail ring and a valid bbox" % written[0].name)
     assert len(mod.fetch_passes(spec, tf)) == 2, "written file must tier on re-read"
     print("OK: the written file tiers correctly when read back")
 
@@ -145,8 +145,8 @@ app.destroy()
 # fetched in silence: someone else's city, at full detail, ahead of the
 # operator's own area. Observed on a live run.
 sample_spec = json.loads((REPO / "configs" / "areas" / "example-area.json.sample").read_text())
-assert mod.is_unmodified_sample(sample_spec), "the sample itself must be recognised"
-print("OK: an unmodified sample copy is recognised by its bounds")
+assert mod.is_unmodified_sample(sample_spec), "the sample itself must be recognized"
+print("OK: an unmodified sample copy is recognized by its bounds")
 
 edited = dict(sample_spec); edited["north"] = round(edited["north"] + 0.5, 6)
 assert not mod.is_unmodified_sample(edited), "an edited sample is a real area"
@@ -154,7 +154,7 @@ print("OK: editing the bounds makes it a legitimate area again")
 
 assert not mod.is_unmodified_sample({"center": {"lat": 1, "lon": 2}, "radius_miles": 50})
 assert not mod.is_unmodified_sample({"nonsense": True})
-print("OK: centre/radius areas and malformed specs are not mistaken for it")
+print("OK: center/radius areas and malformed specs are not mistaken for it")
 
 # end to end: a stale file present alongside a real one is skipped, not fetched
 import types, shutil as _sh

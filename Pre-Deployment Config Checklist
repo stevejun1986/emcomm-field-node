@@ -147,7 +147,7 @@ Confirm:
 **QMapShack's settings live at `~/.config/QLandkarte/QMapShack.conf`.** Not
 QLandkarteGT — that was the predecessor project, and earlier runs of this
 provisioner staged there, where QMapShack never looked. If a node carries a
-`~/.config/QLandkarteGT/` directory, anything you customised in it has never
+`~/.config/QLandkarteGT/` directory, anything you customized in it has never
 been in effect; move it across by hand. The provisioner warns when it sees one
 and copies nothing, because a stale profile would overwrite a good one.
 
@@ -166,7 +166,7 @@ select both; running the map step alone downloads tiles that nothing points at.
 Everything it writes is a seed — QMapShack rewrites this file on exit, so once
 you have set your own view, layer and paths, those win on later runs.
 
-**The first view is centred on your area.** QMapShack's built-in default is
+**The first view is centered on your area.** QMapShack's built-in default is
 12E 49N — central Europe — so on a node provisioned for anywhere else the first
 launch opens on blank canvas, and reaching your own area means panning across an
 ocean while the map source is asked for tiles that do not exist.
@@ -213,7 +213,7 @@ whose zoom falls outside the tiles on disk.
 no USNG or MGRS support — the terms appear nowhere in its source, and its grid
 takes a projection rather than a grid system. Setting it to the operating area's
 UTM zone draws the same lines USNG does, at the same places; what you do not get
-is USNG's 100 km square letters on the labels, which read as UTM metres instead.
+is USNG's 100 km square letters on the labels, which read as UTM meters instead.
 For ICS work that means a position is transcribable but not directly readable as
 a USNG string. The basemap itself needs nothing: USGS Topo is already the ICS
 reference basemap, and there is no such thing as a USNG tile source.
@@ -310,7 +310,7 @@ Before the node counts as ready, exercise it end to end:
 
 ## 14. GPS Time Source (gpsd + chrony)
 Without this a node's only time sources are internet NTP pools it cannot reach
-in the field. It never synchronises, `chronyc tracking` reports
+in the field. It never synchronizes, `chronyc tracking` reports
 `Not synchronised` indefinitely, and nothing reports an error. JS8Call feels it
 first — its timed transmit windows want the clock inside about a second, and a
 node that has been off for a week can be far enough out to hear nothing and be

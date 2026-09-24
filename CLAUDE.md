@@ -21,8 +21,8 @@ decisions.
 **That rule runs both ways, and the other direction is the one that gets missed.
 Related changes to one subsystem ship together, not one PR per instruction.**
 
-A behaviour change and the documentation it creates or invalidates belong in the
-same PR. So does the verification row that checks the behaviour, the checklist
+A behavior change and the documentation it creates or invalidates belong in the
+same PR. So does the verification row that checks the behavior, the checklist
 entry the operator now needs, and the sample config the change requires. If
 landing the code leaves the repository describing something that is no longer
 true — even for an hour — the pieces were not separable.
@@ -33,7 +33,7 @@ PR reads as a considered change. Same diff, different story about how it was
 built.
 
 The rule bites hardest when work arrives as a sequence of requests. Each one in
-isolation looks like its own PR; together they are one change. **Recognising that
+isolation looks like its own PR; together they are one change. **Recognizing that
 is the agent's job, not the owner's** — say "these are one change, I will land
 them together" rather than executing each request separately and leaving the
 owner to notice afterwards.
@@ -60,13 +60,13 @@ files. A claim with no evidence under WHY is an assertion, and the next reader
 cannot check it.
 
 **THE FIX** — what was done, and any structural decision worth recording — why
-a constant was centralised rather than corrected in place, why a rename was
+a constant was centralized rather than corrected in place, why a rename was
 chosen over an exclusion list.
 
 Close with what was verified and what was not.
 
 Omit second-person address, pleasantries, and narration of the author's process.
-`Your screenshot showed the total mislabelled` is `The estimate labelled the sum
+`Your screenshot showed the total mislabeled` is `The estimate labeled the sum
 "both layers" while each row already counted every layer`. `I fixed it
 structurally` is `Pacing defaults are defined once in the fetcher and imported
 by the GUI`. The body is a record for whoever reads the log in a year with no
@@ -267,7 +267,7 @@ Categorize by what the change does:
 | Breaks an already-provisioned node or an existing config | MAJOR — `2.0.0` |
 
 Clearing the pre-release flag is not itself a version event. It changes how the
-release is labelled, not what the scripts do, so the number moves only if a script
+release is labeled, not what the scripts do, so the number moves only if a script
 moved with it.
 
 This replaces an earlier rule under which `v1.0.0` covered the entire pre-release

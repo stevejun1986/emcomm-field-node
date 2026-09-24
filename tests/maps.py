@@ -6,11 +6,11 @@
 Nothing here needs a display, a network or QMapShack itself. The assertions
 are about the three things that were wrong and are cheap to get wrong again:
 the settings file is the one QMapShack reads, the view opens on the operating
-area rather than on its built-in centre in Europe, and a tile path is resolved
+area rather than on its built-in center in Europe, and a tile path is resolved
 by string substitution rather than by starting a JavaScript engine per tile.
 
 The QPointF encoder is the part with no margin for error -- QMapShack stores
-the view centre as a binary QVariant, so a byte wrong is a view silently at
+the view center as a binary QVariant, so a byte wrong is a view silently at
 (0, 0). Its output was verified against Qt's own QSettings reader over 3,005
 coordinates; this file re-checks the properties that do not need Qt present.
 """
@@ -40,14 +40,14 @@ for name in ("QMS_CONF_REL", "QMS_CONF_LEGACY_REL", "QMS_VIEW_GROUP",
 for fn in ("_qt_ini_escape", "qsettings_qpointf", "utm_proj_for", "tile_zoom_range",
            "tms_zoom_levels", "qms_view_prefixes",
            "_qms_text_value", "qms_map_key", "_canvas_edit", "configure_qmapshack",
-           "area_centre"):
+           "area_center"):
     m = re.search(r"^def %s\(.*?(?=\n\ndef |\n\n# |\n\nMAP_LAYERS)" % fn, SRC, re.S | re.M)
     assert m, "function %s went missing" % fn
     exec(compile(m.group(0), "<prov>", "exec"), mod)
 
 
 # --- the settings file is the one QMapShack reads ------------------------
-# QMapShack's main.cpp sets organisation "QLandkarte"; QLandkarteGT was the
+# QMapShack's main.cpp sets organization "QLandkarte"; QLandkarteGT was the
 # predecessor project and nothing reads it.
 assert str(mod["QMS_CONF_REL"]) == ".config/QLandkarte/QMapShack.conf", mod["QMS_CONF_REL"]
 assert "QLandkarteGT" in str(mod["QMS_CONF_LEGACY_REL"])
@@ -55,7 +55,7 @@ assert "QLandkarteGT" not in str(mod["QMS_CONF_REL"])
 print("OK: the staged profile goes where QMapShack looks for it")
 
 
-# --- the view centre encodes to what QSettings would write ---------------
+# --- the view center encodes to what QSettings would write ---------------
 # Type id 26 is QVariant::PointF, then two big-endian doubles, x = longitude
 # and y = latitude, both in RADIANS.
 def decode(setting: str):
@@ -86,7 +86,7 @@ for lat, lon in [(33.45, -112.07), (0.0, 0.0), (85.0, 180.0), (-85.0, -180.0),
     x, y = math.radians(lon), math.radians(lat)
     got_x, got_y = decode(mod["qsettings_qpointf"](x, y))
     assert abs(got_x - x) < 1e-12 and abs(got_y - y) < 1e-12, (lat, lon, got_x, got_y)
-print("OK: the view centre round-trips through Qt's own escaping, in radians")
+print("OK: the view center round-trips through Qt's own escaping, in radians")
 
 # A value whose bytes contain ';' ',' or '=' must be quoted, or QSettings
 # reads it back as a string list and the view silently falls back to (0, 0).
@@ -217,7 +217,7 @@ with tempfile.TemporaryDirectory() as td:
     assert "+proj=utm +zone=12" in text
     x, y = decode(text.split(vp + "posFocus=")[1].splitlines()[0])
     assert abs(math.degrees(y) - 33.45) < 1e-9 and abs(math.degrees(x) + 112.07) < 1e-9
-print("OK: zoom index, scale table, grid projection and centre are all correct")
+print("OK: zoom index, scale table, grid projection and center are all correct")
 
 # The staged profile is a group's file, not ours. A byte this provisioner
 # cannot decode has to come back out unchanged.
@@ -304,12 +304,12 @@ assert url.endswith("/%1/%2/%3.png"), url
 print("OK: tile paths resolve by substitution, with the real zoom range declared")
 
 
-# --- operating area centre, given either way -----------------------------
-assert mod["area_centre"]({"center": {"lat": 33.45, "lon": -112.07}}) == (33.45, -112.07)
-assert mod["area_centre"]({"north": 1.0, "south": -1.0, "east": 4.0, "west": 2.0}) == (0.0, 3.0)
-assert mod["area_centre"]({"north": 1.0}) is None
-assert mod["area_centre"]({}) is None
-print("OK: an area centre is read from a centre or derived from a box")
+# --- operating area center, given either way -----------------------------
+assert mod["area_center"]({"center": {"lat": 33.45, "lon": -112.07}}) == (33.45, -112.07)
+assert mod["area_center"]({"north": 1.0, "south": -1.0, "east": 4.0, "west": 2.0}) == (0.0, 3.0)
+assert mod["area_center"]({"north": 1.0}) is None
+assert mod["area_center"]({}) is None
+print("OK: an area center is read from a center or derived from a box")
 
 # --- neither row may pass for work that did not happen -------------------
 # configure_qmapshack() creates the settings file whether or not a profile
@@ -386,7 +386,7 @@ print("OK: the diagnostic ships in the release archive")
 #
 # So a check that knows only the literal spelling cannot see the group
 # QMapShack itself wrote. It concludes the profile has no saved view, seeds
-# one, and the operator's own view centre is gone -- on the second run of a
+# one, and the operator's own view center is gone -- on the second run of a
 # provisioner whose whole promise here is to seed and never overwrite.
 prefixes = mod["qms_view_prefixes"]()
 assert prefixes[0] == "Views\\View%201\\", prefixes[0]
@@ -415,15 +415,15 @@ text = after_qmapshack.read_text()
 assert done["view"] == "kept", "re-seeded over a saved view: %r" % done["view"]
 assert done["maps"] == "kept", "re-registered known maps: %r" % done["maps"]
 assert text.count("posFocus=") == 1, "%d posFocus lines" % text.count("posFocus=")
-assert OWN in text, "the operator's own view centre was overwritten"
+assert OWN in text, "the operator's own view center was overwritten"
 print("OK: a profile QMapShack has saved is left alone on a re-run")
 
 # The older literal spelling still counts as a saved view.
 legacy = staged("[Canvas]\nmapPath=\nViews\\View 1\\posFocus=%s\n" % OWN)
 done = mod["configure_qmapshack"](legacy, maps_dir, [one_tms],
                                   lat=33.5, lon=-112.05, zoom=12)
-assert done["view"] == "kept", "literal 'View 1' no longer recognised"
-print("OK: the literal spelling is recognised too")
+assert done["view"] == "kept", "literal 'View 1' no longer recognized"
+print("OK: the literal spelling is recognized too")
 
 # A profile that has never been opened still gets seeded, in Qt's spelling.
 fresh = staged("[Canvas]\nmapPath=\n")
@@ -447,7 +447,7 @@ print("OK: a fresh profile is seeded once, and a re-run changes nothing")
 #
 # This was found on a node, not in a test -- the maps listed, the view was
 # right, and the operator still had to click. So both spellings are written,
-# and current QMapShack honours the old one: loadMapList() applies
+# and current QMapShack honors the old one: loadMapList() applies
 # map/active after map2, unconditionally, calling activate() per key.
 with tempfile.TemporaryDirectory() as td:
     maps, files = fixture(td)

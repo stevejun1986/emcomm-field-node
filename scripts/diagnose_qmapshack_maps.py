@@ -73,7 +73,7 @@ def ini_get(text, key):
 
 
 def decode_pointf(value):
-    """QSettings stores the view centre as a binary QVariant QPointF, in
+    """QSettings stores the view center as a binary QVariant QPointF, in
     radians. Returns (lat, lon) in degrees, or None if it is not one."""
     body = value[1:-1] if value.startswith('"') else value
     if not (body.startswith("@Variant(") and body.endswith(")")):
@@ -208,13 +208,13 @@ def main():
     print("\n4. VIEW")
     pf = ini_get(text, "Views\\%s\\posFocus" % QMS_VIEW_GROUP)
     zi = ini_get(text, "Views\\%s\\map2\\zoomIndex" % QMS_VIEW_GROUP)
-    centre = decode_pointf(pf) if pf else None
-    if centre is None:
-        print("   no view centre -- QMapShack opens on its built-in centre,")
+    center = decode_pointf(pf) if pf else None
+    if center is None:
+        print("   no view center -- QMapShack opens on its built-in center,")
         print("   12E 49N in central Europe, where this node has no tiles")
-        faults.append("no view centre")
+        faults.append("no view center")
     else:
-        print("   centre     lat %.5f  lon %.5f" % centre)
+        print("   center     lat %.5f  lon %.5f" % center)
     if zi is not None:
         z = QMS_ZOOM_BASE - int(zi)
         print("   zoom       index %s -> slippy z%d" % (zi, z))
@@ -228,14 +228,14 @@ def main():
             print("      that recomputes it. ZOOM IN; the map is there.")
             faults.append("ZOOM: the saved view is at z%d, %s the tiles on disk "
                           "(z%d-z%d)" % (z, where, lo, hi))
-        if centre:
+        if center:
             print("\n5. THE TILES QMAPSHACK WILL ASK FOR AT THAT VIEW")
             for layer_dir in sorted(p for p in (TILES.iterdir() if TILES.is_dir() else [])
                                     if p.is_dir()):
-                x, y = deg2num(centre[0], centre[1], z)
+                x, y = deg2num(center[0], center[1], z)
                 hits = sum(1 for dx in (-1, 0, 1) for dy in (-1, 0, 1)
                            if (layer_dir / str(z) / str(x + dx) / ("%d.png" % (y + dy))).is_file())
-                print("   %-10s z%-3d centre tile %d/%d -> %d of the 9 around it exist"
+                print("   %-10s z%-3d center tile %d/%d -> %d of the 9 around it exist"
                       % (layer_dir.name, z, x, y, hits))
                 if hits == 0 and not any(f.startswith("ZOOM:") for f in faults):
                     # Suppressed when the zoom is already the known cause --

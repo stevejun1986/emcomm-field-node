@@ -59,7 +59,7 @@ service cannot be assumed.
 | Training, drill and exercise | The same build under realistic conditions, so the exercise tests procedure rather than someone's laptop |
 | Readiness and bench work | A single pass rebuilds a node, or re-runs one step of it, which makes a cabinet full of laptops maintainable rather than archaeological |
 
-It suits a group that wants **standardisation without a full-time IT volunteer**.
+It suits a group that wants **standardization without a full-time IT volunteer**.
 The build is reproducible, the result is inspectable, and a node handed to a
 new operator behaves like the one they trained on.
 
@@ -184,8 +184,8 @@ sent to whoever is helping.
 
 - **Not a radio, and not a substitute for one.** It is the workstation beside
   the radio.
-- **Not a licence and not training.** Transmitting on the amateur bands
-  requires an operator licence; the software says so where a callsign is
+- **Not a license and not training.** Transmitting on the amateur bands
+  requires an operator license; the software says so where a callsign is
   entered rather than only in documentation.
 - **Not an offline copy of the internet.** It carries what was staged onto it,
   chosen by the group that built it.
@@ -261,7 +261,7 @@ direct before-and-after on one machine separated the two.
 
 Where a claim is inherited rather than measured — a figure from a datasheet, a
 hardware identifier from a walkthrough rather than a dump of the real device —
-it is labelled as such in the source that uses it.
+it is labeled as such in the source that uses it.
 
 ## Limits
 
@@ -280,11 +280,11 @@ it is labelled as such in the source that uses it.
 
 ## Licensing
 
-Released under the **GNU General Public License v3.0 or later**. The licence
+Released under the **GNU General Public License v3.0 or later**. The license
 text ships with every release archive; it is deliberately not excluded from the
 packaged artifact.
 
-Some capabilities require an amateur radio licence to operate legally on the
+Some capabilities require an amateur radio license to operate legally on the
 air. Receiving is unrestricted; transmitting is not.
 
 ## Closing

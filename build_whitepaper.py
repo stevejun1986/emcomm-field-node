@@ -61,12 +61,12 @@ def inline(text: str) -> str:
     return text
 
 
-def bar(flowables, colour, pad=7):
+def bar(flowables, color, pad=7):
     t = Table([[flowables]], colWidths=[6.3 * inch])
     t.setStyle(TableStyle([
         ("LEFTPADDING", (0, 0), (-1, -1), pad), ("RIGHTPADDING", (0, 0), (-1, -1), pad),
         ("TOPPADDING", (0, 0), (-1, -1), pad), ("BOTTOMPADDING", (0, 0), (-1, -1), pad),
-        ("LINEBEFORE", (0, 0), (0, -1), 2.5, colour), ("VALIGN", (0, 0), (-1, -1), "TOP")]))
+        ("LINEBEFORE", (0, 0), (0, -1), 2.5, color), ("VALIGN", (0, 0), (-1, -1), "TOP")]))
     return t
 
 
