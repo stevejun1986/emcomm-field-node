@@ -111,4 +111,33 @@ assert re.search(r"^ADEVICE=$", sample, re.M), "sample must ship empty"
 assert re.search(r"^PTT_DEVICE=$", sample, re.M), "sample must ship empty"
 print("OK: the sample explains by-id, the CP2102 RTS switch, and ships empty")
 
+
+# --- an install failure does not cancel the configuration ----------------
+# Observed on a node running the hand-ported equivalent of this step: the
+# config block sat behind apt's exit status, so a run where apt returned
+# non-zero wrote no direwolf.conf at all -- on a machine that already had
+# direwolf and could use one. Verification then showed "Direwolf installed"
+# green and "Direwolf config written" red, one under the other, because that
+# first row asks which() and not apt.
+#
+# Sliced to the step, not the whole file: shutil.which("direwolf") and
+# proc.stdout both appear elsewhere, so a whole-file assertion passes while
+# this step no longer does either -- which is exactly the shape of failure
+# these lines exist to catch.
+step = SRC[SRC.index("def optional_direwolf(ctx: Ctx):"):]
+step = step[:step.index("\n\n\n")]
+assert 'present = shutil.which("direwolf") is not None' in step, \
+    "the step no longer checks whether direwolf is present, only whether apt succeeded"
+assert "if status == 0 or present:" in step, \
+    "the config block is gated on the install status again"
+# A non-zero apt exit is the transaction's status, not a verdict on the
+# package. Saying "install failed" asserted a cause from an exit code.
+assert "Direwolf install failed" not in step, \
+    "a non-zero apt exit is being reported as the install having failed"
+# ctx.sudo() captures output into a pipe; this step used to read the return
+# code, drop the rest, and point the operator at a log with nothing in it.
+assert 'output = (proc.stdout or "").strip()' in step, \
+    "apt's own output is being discarded again"
+print("OK: the config is written when direwolf is present, not when apt succeeded")
+
 print("\nRADIO: ALL ASSERTIONS PASSED")

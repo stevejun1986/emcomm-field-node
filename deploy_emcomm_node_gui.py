@@ -2544,11 +2544,44 @@ def direwolf_ptt_line(device, method) -> str:
 
 def optional_direwolf(ctx: Ctx):
     with ctx.spin("Installing Direwolf...") as spin_result:
-        status = ctx.sudo("apt", "install", "-y", "direwolf", check=False).returncode
+        proc = ctx.sudo("apt", "install", "-y", "direwolf", check=False)
+        status = proc.returncode
         spin_result.ok = (status == 0)
 
-    if status == 0:
-        ctx.log("[+] Direwolf installed.", "ok")
+    # The configuration is written whenever direwolf is actually present, not
+    # only when this run installed it. apt failing on a node that already has
+    # direwolf -- no network, a held lock, a partly-configured package -- used
+    # to skip the whole config block, leaving no direwolf.conf behind a green
+    # "Direwolf installed" verification row, because that row asks which() and
+    # not apt. The install and the configuration are two things, and one
+    # failing should not silently cancel the other.
+    present = shutil.which("direwolf") is not None
+    if status != 0:
+        # Not "the install failed": a non-zero exit from apt says the
+        # transaction ended badly, not that the package is absent or broken.
+        # apt returns non-zero for a held lock, a failing post-invoke hook, or
+        # a warning it was configured to treat as fatal, on a machine where
+        # the package was already installed and perfectly usable. Report the
+        # status and let the output below say what happened.
+        ctx.log("[!] apt exited %d. That is the transaction's status, not a "
+                "statement about the package — direwolf may be installed and "
+                "fine. apt said:" % status, "warn")
+        # ctx.sudo() captures stdout and stderr into a pipe, and this step used
+        # to read only the return code and drop the rest -- then tell the
+        # operator to check a log that had nothing in it. Say what apt said.
+        output = (proc.stdout or "").strip()
+        if output:
+            for line in output.splitlines()[-12:]:
+                ctx.log("    apt: " + line, "warn")
+        else:
+            ctx.log("    (apt produced no output)", "warn")
+
+    if status == 0 or present:
+        if status == 0:
+            ctx.log("[+] Direwolf installed.", "ok")
+        else:
+            ctx.log("[*] direwolf is already on PATH, so its configuration is written "
+                    "anyway — the failure above did not remove it.", "info")
         direwolf_config_dir = ctx.home / ".config" / "direwolf"
         direwolf_config_dir.mkdir(parents=True, exist_ok=True)
 
@@ -2635,7 +2668,8 @@ KISSPORT 8001
                     "fill it in, and re-run this step. See checklist sections 3 and 4.",
                     "warn")
     else:
-        ctx.log("[!] Direwolf install failed — check log above.", "err")
+        ctx.log("[!] direwolf is not on PATH either, so no configuration was written. "
+                "Fix the install and re-run this step.", "err")
 
 
 #: The mesh -> GPX bridge, written to the node by the Meshtastic step when
