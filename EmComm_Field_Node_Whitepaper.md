@@ -171,6 +171,16 @@ and a reboot; a GPS receiver reaching stratum one within about a minute of a
 cold boot with no network, twice; offline maps drawing from local tiles with
 the network pulled.
 
+That last one is worth stating precisely, because it is the kind of claim this
+section exists to discipline. When it was first recorded, the map sources were
+listed and the operator selected the layer by hand. The activation keys being
+written were ones the mapping application's shipped version does not read — it
+renamed that configuration group in a later release — so nothing was activated,
+and a listed source is indistinguishable from an active one at a glance. The
+layer now draws unselected, and that has been observed on a node. The original
+record was true about the tiles and wrong about the activation, and only a
+direct before-and-after on one machine separated the two.
+
 **Not observed, and stated as such:**
 
 - **Dock-triggered autostart has never fired**, on any hardware. The step
