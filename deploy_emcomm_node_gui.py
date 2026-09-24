@@ -2542,6 +2542,82 @@ def direwolf_ptt_line(device, method) -> str:
     return "PTT %s %s" % (device, method)
 
 
+#: udev rule that keeps ModemManager away from the declared radio interface.
+RADIO_MM_RULE = "/etc/udev/rules.d/99-emcomm-radio-no-modemmanager.rules"
+
+
+def modemmanager_id_serial(ptt_device):
+    """ID_SERIAL for a /dev/serial/by-id/ path, or None if one cannot be read.
+
+    udev builds a by-id name as usb-<ID_SERIAL>-if<NN>-port<N>, so the value a
+    udev rule has to match on is already inside the path the operator
+    declared. Deriving it from the declaration rather than from the device is
+    the whole point: the rule can be written with the interface unplugged, and
+    nothing opens a port that keys a transmitter in order to find out what to
+    write.
+
+    A numbered path carries no serial, so this returns None and the caller
+    says why -- one more reason to declare the by-id form.
+    """
+    if not ptt_device:
+        return None
+    name = os.path.basename(ptt_device.strip())
+    if not name.startswith("usb-"):
+        return None
+    name = name[len("usb-"):]
+    # Most specific first: a serial number containing "-port" survives as long
+    # as the interface suffix is the thing at the end.
+    for pat in (r"-if[0-9a-fA-F]{2}-port\d+$", r"-if[0-9a-fA-F]{2}$", r"-port\d+$"):
+        m = re.search(pat, name)
+        if m:
+            name = name[:m.start()]
+            break
+    return name or None
+
+
+def radio_mm_rule_text(id_serial) -> str:
+    """The udev rule body, as a function so the step and the test agree."""
+    return (
+        "# EmComm Field Node - keep ModemManager off the radio interface.\n"
+        "#\n"
+        "# ModemManager probes an unknown serial port by WRITING AT commands to\n"
+        "# it. Writing opens the port, opening asserts RTS, and on this interface\n"
+        "# RTS is what keys the transmitter -- so a probe can put a station on\n"
+        "# the air that nobody asked to transmit, into an antenna that may not be\n"
+        "# connected, under a callsign that may be a placeholder.\n"
+        "#\n"
+        "# ID_SERIAL is the string udev builds the /dev/serial/by-id/ path from,\n"
+        "# so this match came out of the declaration in configs/radio.conf. The\n"
+        "# bus was never scanned, and nothing was opened to write it.\n"
+        "#\n"
+        "# Re-run the Direwolf step after changing interfaces. A rule naming a\n"
+        "# device you no longer use protects nothing and looks like it does.\n"
+        'ACTION=="add|change", SUBSYSTEM=="tty", ENV{ID_SERIAL}=="%s", '
+        'ENV{ID_MM_DEVICE_IGNORE}="1"\n' % id_serial
+    )
+
+
+def _udev_property(device, key):
+    """One property from udev's database for a device node, or None.
+
+    `udevadm info` reads the database and sysfs; it does not open the device.
+    That distinction is the reason this is safe to call against an interface
+    whose control lines key a transmitter, where reading the port is not.
+    """
+    try:
+        out = subprocess.run(["udevadm", "info", "-q", "property", "-n", device],
+                             stdin=subprocess.DEVNULL, capture_output=True, text=True)
+    except OSError:
+        return None
+    if out.returncode != 0:
+        return None
+    for line in out.stdout.splitlines():
+        k, _, v = line.partition("=")
+        if k == key:
+            return v
+    return None
+
+
 def optional_direwolf(ctx: Ctx):
     with ctx.spin("Installing Direwolf...") as spin_result:
         proc = ctx.sudo("apt", "install", "-y", "direwolf", check=False)
@@ -2629,6 +2705,28 @@ def optional_direwolf(ctx: Ctx):
                          "# on the CP2102 serial port's RTS line, not a CM108 GPIO. See\n"
                          "# configs/radio.conf.sample.\n"
                          "PTT CM108")
+
+        # ModemManager probes an unknown serial port by writing AT commands to
+        # it, and on this interface writing asserts RTS, which is what keys the
+        # transmitter. The remedy has been documented in the Meshtastic
+        # troubleshooting notes since that step was written; it was never
+        # installed for the one device where a stray probe transmits.
+        mm_serial = modemmanager_id_serial(ptt_device)
+        if mm_serial:
+            ctx.sudo_write(RADIO_MM_RULE, radio_mm_rule_text(mm_serial))
+            ctx.sudo("udevadm", "control", "--reload-rules", check=False)
+            ctx.log("[+] ModemManager exclusion installed for %s." % mm_serial, "ok")
+            ctx.log("[*] udev evaluates rules on the device event, so this applies the "
+                    "next time the interface is attached — not to a port something is "
+                    "already holding. Checklist section 4 says not to have a radio "
+                    "connected while the node is first configured; that ordering is "
+                    "what makes this land before anything can key.", "info")
+        elif ptt_device:
+            ctx.log("[!] %s is a numbered path, so no ModemManager exclusion was "
+                    "written — the rule matches on the serial that only the "
+                    "/dev/serial/by-id/ form carries. ModemManager probes unknown "
+                    "serial ports by writing to them, and writing asserts RTS. "
+                    "Declare the by-id path and re-run this step." % ptt_device, "warn")
 
         (direwolf_config_dir / "direwolf.conf").write_text(f"""# --- {OPERATOR_PREFIX} Direwolf Base Config ---
 # Callsign pulled from Node ID set during provisioning.
@@ -4231,6 +4329,44 @@ def verify_deployment(ctx: Ctx, selected_ids: set) -> list:
                  else "no configs/radio.conf")
                 + " — PTT is the shipped guess 'CM108', which does not key a Digirig "
                   "Mobile: its PTT is on the CP2102's RTS line")
+
+        # ModemManager probes an unknown serial port by writing AT commands to
+        # it, and on this interface writing asserts RTS, which keys the
+        # transmitter. A row for the rule that stops it has to read what the
+        # rule says: a file that exists but names an interface this node no
+        # longer uses protects nothing, and looks like it does.
+        #
+        # Where the interface is attached, udev's own database is the better
+        # answer than the file -- it says the rule matched, not merely that it
+        # was written. Reading that database does not open the port.
+        mm_serial = modemmanager_id_serial(ptt_device)
+        if mm_serial:
+            try:
+                rule = Path(RADIO_MM_RULE).read_text(errors="replace")
+            except OSError:
+                rule = ""
+            applied = (_udev_property(ptt_device, "ID_MM_DEVICE_IGNORE")
+                       if Path(ptt_device).exists() else None)
+            named = "ID_MM_DEVICE_IGNORE" in rule and mm_serial in rule
+            if applied == "1":
+                add("ModemManager excluded from the radio interface", "pass",
+                    "udev reports ID_MM_DEVICE_IGNORE=1 on the attached interface")
+            elif named and applied is None:
+                add("ModemManager excluded from the radio interface", "pass",
+                    "rule names %s; not attached, so udev has not applied it yet"
+                    % mm_serial)
+            elif named:
+                add("ModemManager excluded from the radio interface", "warn",
+                    "the rule names %s but udev has not applied it to the attached "
+                    "interface — replug it or reboot" % mm_serial)
+            elif rule:
+                add("ModemManager excluded from the radio interface", "warn",
+                    "%s does not name %s — re-run the Direwolf step after changing "
+                    "interfaces" % (RADIO_MM_RULE, mm_serial))
+            else:
+                add("ModemManager excluded from the radio interface", "warn",
+                    "no %s. ModemManager probes unknown serial ports by writing to "
+                    "them, and writing asserts RTS on this one" % RADIO_MM_RULE)
 
     if "meshtastic" in selected_ids:
         want(home / ".local" / "bin" / "meshtastic", "Meshtastic wrapper on PATH")

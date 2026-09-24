@@ -82,6 +82,49 @@ relying on the station.
 Confirm PTT actually keys the radio, into a dummy load, before relying on it.
 Nothing in this repository has ever keyed one.
 
+### ModemManager is kept off the interface by a udev rule
+
+`ModemManager` probes an unknown serial port by **writing AT commands to it**.
+Writing opens the port, opening asserts RTS, and on this interface RTS is what
+keys the transmitter — so a probe is capable of putting a station on the air
+that nobody asked to transmit.
+
+The Direwolf step writes `/etc/udev/rules.d/99-emcomm-radio-no-modemmanager.rules`,
+matching the interface declared in `configs/radio.conf`:
+
+```
+ACTION=="add|change", SUBSYSTEM=="tty", ENV{ID_SERIAL}=="<your interface>", ENV{ID_MM_DEVICE_IGNORE}="1"
+```
+
+`ID_SERIAL` is the string udev builds the `/dev/serial/by-id/` path from, so the
+match is derived from the declaration. The bus is never scanned and nothing is
+opened to work out what to write. A numbered `PTT_DEVICE` carries no serial, so
+no rule can be written for one — the step says so and points back here.
+
+Three things worth knowing:
+
+* **It applies at the next device event, not retroactively.** udev evaluates
+  rules when a device appears, so a port something is already holding is
+  unaffected until the interface is replugged or the node reboots. The
+  instruction above — no radio connected while the node is first configured —
+  is what makes the rule land before anything can key.
+* **Re-run the Direwolf step after changing interfaces.** The rule names one
+  device. A rule naming an interface you no longer use protects nothing and
+  looks like it does. Verification reads the rule against the current
+  declaration and warns when the two disagree.
+* **Where the interface is attached, verification asks udev** — `udevadm info
+  -q property` — whether `ID_MM_DEVICE_IGNORE=1` actually landed, rather than
+  trusting that a file was written. Reading udev's database does not open the
+  port.
+
+What has been observed on the nodes this has run on is that ModemManager flags
+the device and does not claim it; Mint 22's default filtering is strict. The
+rule is insurance against the case where it does, on the one device whose
+failure mode is a transmitter rather than a busy port. **Nothing here has been
+observed keying a radio, with or without the rule.**
+
+---
+
 ## 5. Operating Area Map Tiles (scripts/fetch_map_tiles.py)
 Selecting the map step adds an Operating Area screen: a center point in decimal
 degrees and a radius of 50, 75 or 150 miles. It writes configs/areas/<node>-area.json
