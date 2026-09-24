@@ -9,7 +9,13 @@
 # not a repository. What it documents for a contributor -- that configs/ and
 # docs/ are operator-supplied -- is already said in configs/README.md and
 # docs/README.md, both of which do ship.
-tests/          export-ignore
-CLAUDE.md       export-ignore
-.gitattributes  export-ignore
-.gitignore      export-ignore
+#
+# CONTRIBUTING.md, SECURITY.md and .github/ are about working on this
+# repository, not about running a node. The archive is the product.
+tests/            export-ignore
+CONTRIBUTING.md   export-ignore
+SECURITY.md       export-ignore
+.github/          export-ignore
+CLAUDE.md         export-ignore
+.gitattributes    export-ignore
+.gitignore        export-ignore

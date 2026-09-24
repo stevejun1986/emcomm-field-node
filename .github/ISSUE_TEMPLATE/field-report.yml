@@ -1,0 +1,51 @@
+name: Field report
+description: Something worked, or did not, on real hardware
+labels: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Reports from hardware nobody here owns are the most useful thing this
+        project receives. A node that worked is worth reporting too — most of
+        what is written down here has been exercised on one or two machines by
+        one person.
+
+        **If you attach a run log, read it first** — it carries your callsign,
+        hostname, username and home paths.
+
+  - type: input
+    id: version
+    attributes:
+      label: Provisioner version
+      placeholder: v1.0.4
+    validations:
+      required: true
+
+  - type: textarea
+    id: hardware
+    attributes:
+      label: The machine and what was attached to it
+      placeholder: >-
+        Laptop model, OS version, and which of GPS / radio interface / SDR /
+        mesh node were connected.
+    validations:
+      required: true
+
+  - type: textarea
+    id: what
+    attributes:
+      label: What you did and what you observed
+      description: >-
+        Including anything that behaved differently from what the checklist or
+        TESTING.md led you to expect.
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: transmitted
+    attributes:
+      label: Did this involve transmitting?
+      options:
+        - label: >-
+            This report involves a transmitter being keyed, under a licensed
+            callsign

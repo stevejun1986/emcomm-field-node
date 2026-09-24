@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Reporting a failure — the procedure
+    url: https://github.com/stevejun1986/emcomm-field-node/blob/main/TESTING.md#reporting-a-failure
+    about: Which log to send, and what to strip out of it before you do.
+  - name: Before deploying a node
+    url: https://github.com/stevejun1986/emcomm-field-node/blob/main/Pre-Deployment%20Config%20Checklist
+    about: The manual steps no automated check covers.

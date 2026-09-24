@@ -1,0 +1,73 @@
+name: A provisioning run failed
+description: A step went red, or finished and did not do what it claimed
+labels: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Before you paste a run log, read it.**
+
+        The header records your callsign, the hostname, your username and
+        absolute `/home/<user>/` paths, and captured command output can carry
+        more of the same. Strip what you do not want public. This repository
+        has already had real operator data scrubbed out of its history once.
+
+  - type: input
+    id: version
+    attributes:
+      label: Provisioner version
+      description: >-
+        The summary screen carries a `Provisioner: v…` line, and the run log
+        repeats it in its header. Without it a report cannot be matched to a
+        tree — a tarball from a release and a clone of `main` can hit the same
+        symptom for different reasons.
+      placeholder: v1.0.4
+    validations:
+      required: true
+
+  - type: input
+    id: step
+    attributes:
+      label: Which step
+      placeholder: GPS time source (gpsd + chrony)
+    validations:
+      required: true
+
+  - type: dropdown
+    id: rerun
+    attributes:
+      label: Had this step run before on this machine?
+      description: Several failures only appear on a second run.
+      options:
+        - "No — clean machine, first time"
+        - "Yes — it had been run before"
+        - "Not sure"
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected, and what happened instead
+    validations:
+      required: true
+
+  - type: textarea
+    id: log
+    attributes:
+      label: Run log
+      description: >-
+        `~/.emcomm/logs/provision-<date>-<time>.log` — its path is the first
+        line of the run screen and appears again on the summary. **Scrub it
+        first.** If you cannot attach it, give the step name, the red ✖ line,
+        and the captured output beneath it.
+      render: text
+
+  - type: textarea
+    id: hardware
+    attributes:
+      label: Hardware attached at the time
+      description: >-
+        GPS receiver, radio interface, SDR, mesh node — and whether this was a
+        VM or bare metal. Devices competing for the same `ttyUSB*` are a known
+        source of trouble.
