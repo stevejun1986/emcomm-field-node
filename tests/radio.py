@@ -22,8 +22,9 @@ REPO = Path(__file__).resolve().parent.parent
 os.chdir(REPO)
 
 SRC = (REPO / "deploy_emcomm_node_gui.py").read_text()
-mod = {"Path": Path, "re": re}
-for fn in ("_read_radio_binding", "_alsa_card_ids", "direwolf_ptt_line"):
+mod = {"Path": Path, "re": re, "os": os}
+for fn in ("_read_radio_binding", "_alsa_card_ids", "direwolf_ptt_line",
+           "modemmanager_id_serial", "radio_mm_rule_text"):
     m = re.search(r"^def %s\(.*?(?=\n\ndef |\n\n# |\n\n#: )" % fn, SRC, re.S | re.M)
     assert m, "function %s went missing" % fn
     exec(compile(m.group(0), "<prov>", "exec"), mod)
@@ -139,5 +140,77 @@ assert "Direwolf install failed" not in step, \
 assert 'output = (proc.stdout or "").strip()' in step, \
     "apt's own output is being discarded again"
 print("OK: the config is written when direwolf is present, not when apt succeeded")
+
+# --- ModemManager is kept off the interface ------------------------------
+# ModemManager probes an unknown serial port by writing AT commands to it.
+# Writing opens the port, opening asserts RTS, and on this interface RTS keys
+# the transmitter -- so this is the one piece of the step whose absence is an
+# RF event rather than a misconfiguration.
+id_serial = mod["modemmanager_id_serial"]
+
+# The match is derived from the declared path, never from the device, which is
+# what lets the rule be written with nothing plugged in and nothing opened.
+assert id_serial(BY_ID) == \
+    "Silicon_Labs_CP2102_USB_to_UART_Bridge_Controller_X", id_serial(BY_ID)
+assert id_serial("/dev/serial/by-id/usb-Prolific_Technology_Inc._USB-Serial_Controller"
+                 "-if00-port0") == "Prolific_Technology_Inc._USB-Serial_Controller"
+assert id_serial("/dev/serial/by-id/usb-Vendor_Model_serial-with-port9-if02-port0") == \
+    "Vendor_Model_serial-with-port9", "a serial containing -port must survive"
+assert id_serial("/dev/serial/by-id/usb-Some_Vendor_Serial-port0") == "Some_Vendor_Serial"
+assert id_serial("/dev/ttyUSB0") is None, "a numbered path carries no serial"
+assert id_serial("/dev/ttyACM0") is None
+assert id_serial("") is None and id_serial(None) is None
+print("OK: ID_SERIAL is derived from the declaration, not from the device")
+
+rule = mod["radio_mm_rule_text"](id_serial(BY_ID))
+assert 'ENV{ID_MM_DEVICE_IGNORE}="1"' in rule, "the rule does not set the ignore flag"
+assert 'SUBSYSTEM=="tty"' in rule, "the rule is not scoped to tty devices"
+assert 'ENV{ID_SERIAL}=="Silicon_Labs_CP2102_USB_to_UART_Bridge_Controller_X"' in rule, rule
+assert BY_ID not in rule, \
+    "the rule matches on the by-id path rather than ID_SERIAL, which udev does not set"
+assert "keys the transmitter" in rule and "RTS" in rule, \
+    "the rule no longer says why it exists -- the next reader deletes what looks decorative"
+print("OK: the rule matches on ID_SERIAL and says why it exists")
+
+# The step writes it for a by-id declaration, and says so rather than going
+# quiet when it cannot -- the hazard survives a path it cannot match on.
+step = SRC[SRC.index("def optional_direwolf(ctx: Ctx):"):]
+step = step[:step.index("\n\n\n")]
+assert "ctx.sudo_write(RADIO_MM_RULE, radio_mm_rule_text(mm_serial))" in step, \
+    "the step no longer installs the ModemManager exclusion"
+# Matched on what is contiguous in the source: the message is split across
+# two adjacent string literals, so the assembled sentence never appears.
+assert "so no ModemManager exclusion was " in step, \
+    "the step goes quiet about a numbered path it cannot protect"
+assert "udevadm" in step and "reload-rules" in step, \
+    "the step no longer reloads udev after writing the rule"
+print("OK: the step installs the rule, and reports the path it cannot cover")
+
+# The row has to read the rule, not stat it: a file naming an interface this
+# node stopped using protects nothing. Named exactly, because other reads
+# happen in the same block.
+verif = SRC[SRC.index('if "direwolf" in selected_ids:'):]
+verif = verif[:verif.index('if "meshtastic" in selected_ids:')]
+assert "Path(RADIO_MM_RULE).read_text" in verif, \
+    "the row no longer reads the rule's contents"
+assert "mm_serial in rule" in verif, \
+    "the row no longer checks the rule against the current declaration"
+assert '_udev_property(ptt_device, "ID_MM_DEVICE_IGNORE")' in verif, \
+    "the row no longer asks udev whether the rule actually applied"
+for forbidden in ("open(", "Serial", "termios", "fcntl"):
+    assert forbidden not in verif, \
+        "verification must not %s the PTT device to check the rule" % forbidden
+
+# Which branch carries which status is the point. A rule that is not there
+# must never read as a pass.
+_row = verif[verif.index("mm_serial = modemmanager_id_serial(ptt_device)"):]
+_calls = re.findall(
+    r'add\("ModemManager excluded from the radio interface", "(pass|warn)",\s*\n\s*"([^"]*)"',
+    _row)
+assert len(_calls) == 5, "the row's branches changed shape: %r" % (_calls,)
+_passes = sorted(d[:24] for st, d in _calls if st == "pass")
+assert _passes == ["rule names %s; not attac", "udev reports ID_MM_DEVIC"], _passes
+print("OK: verification reads the rule, asks udev, and a missing rule is not a pass")
+
 
 print("\nRADIO: ALL ASSERTIONS PASSED")
