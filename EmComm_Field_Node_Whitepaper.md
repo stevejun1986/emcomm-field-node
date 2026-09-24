@@ -39,8 +39,9 @@ apart differ, and nobody knows which differences matter until one of them does.
 ## Architecture
 
 A single Python script drives everything. It presents five screens — options,
-administrator access, run, verification, summary — and fourteen independently
-selectable steps:
+administrator access, run, verification, summary — plus an operating-area
+screen that appears after the options only when the map step is selected. It
+carries fifteen independently selectable steps:
 
 | Step | What it covers |
 |---|---|
@@ -52,6 +53,7 @@ selectable steps:
 | Offline knowledgebase | Kiwix ZIM archives |
 | Reference library | PDF manuals and a loopback-only document server |
 | App profiles | application configuration and the ALE channel plan |
+| Dock-trigger autostart | udev rule and autostart chain for the reference dock — unproven |
 | GPS time source | gpsd and chrony, bound to a declared receiver |
 | Direwolf | AX.25 / APRS software TNC |
 | Meshtastic CLI | LoRa mesh tooling |
