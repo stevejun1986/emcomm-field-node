@@ -1,5 +1,9 @@
 # EMCOMM Field Node — Provisioner
 
+[![License: GPLv3 or later](https://img.shields.io/badge/license-GPLv3%20or%20later-blue.svg)](LICENSE)
+[![Latest release](https://img.shields.io/github/v/release/stevejun1986/emcomm-field-node?include_prereleases&sort=semver)](https://github.com/stevejun1986/emcomm-field-node/releases)
+[![Platform: Linux Mint 22.x XFCE](https://img.shields.io/badge/platform-Linux%20Mint%2022.x%20XFCE-lightgrey.svg)](#platform)
+
 Builds a standardized, offline-capable emergency communications workstation on a
 Linux laptop: positioning and time sync, HF/VHF digital modes, offline mapping, an
 offline reference library, and packet/mesh tooling.
@@ -10,11 +14,96 @@ built once while online, then operates entirely offline.
 
 ---
 
-## Supported Hardware
+## What a node does
 
-**This package targets a Panasonic Toughbook CF-30 docked in a Havis DS-PAN-111
-series dock.** That is the reference build, and the only combination the
-dock-trigger automation is written for.
+All of this works with **no network** once the node is built:
+
+* **Position and time** from the node's own GPS receiver — stratum 1 with no NTP
+  server in reach, which is what keeps timed digital modes working
+* **HF messaging** — JS8Call for weak-signal keyboard traffic, ion2G for
+  automatic link establishment against a staged channel plan
+* **Packet and APRS** on VHF/UHF through any sound-card interface
+* **LoRa mesh** text and peer positions, via an external Meshtastic node
+* **Offline mapping** — QMapShack over local tile pyramids, registered by the
+  provisioner and drawn on first launch
+* **Offline reference** — a Kiwix encyclopedia, plus a PDF library served on
+  loopback only
+* **Receive-only situational awareness** — ADS-B aircraft tracking and direct
+  weather-satellite imagery
+* **Station logging and radio programming** — QLog and CHIRP
+
+It is **radio-agnostic**: any transceiver with a data or accessory port and
+something that can key it. The provisioner supplies the software, the
+configuration and the channel plan; you declare which audio device and which
+keying line to use.
+
+---
+
+## Quick start
+
+```bash
+sudo apt install python3-tk python3-requests
+python3 deploy_emcomm_node_gui.py
+```
+
+Run it from the folder containing the script, **as your normal user — not with
+`sudo`.** It refuses to start as root.
+
+You are asked for your sudo password once, inside the window. It drives a
+temporary mode-0700 askpass helper for the duration of the run, which is deleted
+when the run ends. The password is never written anywhere else and never leaves
+the machine.
+
+`python3-tk` is **not** bundled with Python on Debian/Ubuntu/Mint; the GUI will
+not start without it. `python3-requests` is optional — downloads fall back to
+`curl`.
+
+Check the steps this node needs, or **Select All** for a full build. Steps are
+independent and not dependency-checked, so any one can be re-run on its own —
+though the ion2G step assumes `wine` and `unzip` are already installed.
+
+**Read [`TESTING.md`](TESTING.md) before provisioning a node you intend to
+deploy.** It covers what to watch for per step, the known rough edges, and where
+a run writes its log.
+
+---
+
+## Documentation
+
+| | |
+| --- | --- |
+| [**White paper**](EmComm_Field_Node_Whitepaper.pdf) | What a field node is for, who deploys one, and what a provisioned node can do — with an explicit account of what has been observed on hardware versus what has been written and checked but never exercised |
+| [`TESTING.md`](TESTING.md) | Per-step expectations, the known rough edges, and how to report a failure |
+| [`Pre-Deployment Config Checklist`](Pre-Deployment%20Config%20Checklist) | Every manual step before a node is deployed: audio device, PTT keying, GPS binding, map registration |
+| [`configs/README.md`](configs/README.md) | The placeholder contract, operating areas, and the GPS and radio device bindings |
+| [`docs/README.md`](docs/README.md) | What belongs in the reference library, and the licensing question to settle before adding it |
+
+---
+
+## Platform
+
+This is vanilla Linux configuration and runs on **any x86_64 system** meeting the
+requirements below. One optional step is tied to specific hardware; everything
+else is not.
+
+* **OS:** Linux Mint 22.x, XFCE edition (Ubuntu 24.04 / "noble" base)
+* **Typical hardware:** any serviceable laptop; rugged/ex-fleet machines (Panasonic
+  Toughbook, Getac, Dell Latitude Rugged) are common because they are cheap
+  secondhand, run from 12V, and tolerate field conditions
+* **Interfaces:** USB / serial to radio hardware (sound-card interface, GPS puck,
+  RTL-SDR, LoRa node)
+
+One further component is environment-specific:
+
+* Desktop-shortcut trust uses XFCE mechanisms (`xfconf`,
+  `metadata::xfce-exe-checksum`). Another desktop environment needs different
+  handling.
+
+### The dock-trigger step is the one hardware-specific part
+
+Everything else provisions normally on any supported machine. **The dock-trigger
+step targets a Panasonic Toughbook CF-30 in a Havis DS-PAN-111 series dock** —
+the reference build, and the only combination that automation is written for.
 
 > **The dock-trigger automation is a future feature, and is stated as one
 > deliberately.** It is *being designed for* the combination above — a CF-30 in a
@@ -56,26 +145,6 @@ configuration option, and it is on you to verify.
 
 ---
 
-## Target Platform
-
-Apart from the dock automation above, this is vanilla Linux configuration and runs
-on any x86_64 system meeting the requirements below.
-
-* **OS:** Linux Mint 22.x, XFCE edition (Ubuntu 24.04 / "noble" base)
-* **Typical hardware:** any serviceable laptop; rugged/ex-fleet machines (Panasonic
-  Toughbook, Getac, Dell Latitude Rugged) are common because they are cheap
-  secondhand, run from 12V, and tolerate field conditions
-* **Interfaces:** USB / serial to radio hardware (sound-card interface, GPS puck,
-  RTL-SDR, LoRa node)
-
-One further component is environment-specific:
-
-* Desktop-shortcut trust uses XFCE mechanisms (`xfconf`,
-  `metadata::xfce-exe-checksum`). Another desktop environment needs different
-  handling.
-
-The dock-trigger rule is hardware-specific — see **Supported Hardware** above.
-
 ---
 
 ## Software Stack
@@ -111,7 +180,7 @@ Installed and configured by the provisioner:
   positions reach the map as a **file, not a live feed**: QMapShack is not believed
   to re-read a GPX that changes on disk, so a refreshed map means importing again
 * **Dock-triggered autostart (udev + systemd):** optional, installed by the
-  provisioner, and **not a finished feature** — see **Supported Hardware** above
+  provisioner, and **not a finished feature** — see [**Platform**](#platform) above
 
 ### ADS-B and SatDump share one dongle
 
@@ -222,6 +291,9 @@ Before distributing a profile, check it for a real callsign, a grid square, abso
 `/home/<someone>/` paths, and hardcoded audio device names. All four are easy to miss
 and all four are wrong on someone else's machine.
 
+The full contract — including how to check a profile before adding it — is in
+[`configs/README.md`](configs/README.md).
+
 ---
 
 ## Verifying a release download
@@ -252,37 +324,6 @@ run the provisioner** — report it on the issue tracker.
 
 Key fingerprint, for checking a copy you got elsewhere:
 `SHA256:Ut/j+m5SlkA1xGBz4wLK9S+9FKXON2Yoj9NYyanTgmw`
-
-## Requirements
-
-```bash
-sudo apt install python3-tk python3-requests
-```
-
-`python3-tk` is **not** bundled with Python on Debian/Ubuntu/Mint — the GUI will not
-start without it. `python3-requests` is optional (downloads fall back to `curl`).
-
-## Running
-
-From the folder containing the script, **as your normal user — not with `sudo`**:
-
-```bash
-python3 deploy_emcomm_node_gui.py
-```
-
-It refuses to start as root. You are asked for your sudo password once, in the
-window; it drives a temporary mode-0700 askpass helper for the duration of the run
-and is deleted when the run ends. It is never written anywhere else and never
-leaves the machine.
-
-Check the steps this node needs, or **Select All** for a full build. Steps are
-independent and not dependency-checked, so any one can be re-run on its own — but
-the ion2G step assumes `wine` and `unzip` are already installed.
-
-`TESTING.md` covers what to watch for per step, the known rough edges, and where
-a run writes its log — read it before provisioning a node you intend to deploy.
-
----
 
 ## Fleet Deployment
 
