@@ -1,177 +1,237 @@
 # EMCOMM FIELD NODE
-%subtitle A provisioner for offline emergency communications workstations — design, method and limits
+%subtitle An offline emergency communications workstation — capability, deployment and limits
 
 ## Summary
 
-An emergency communications node is a laptop that must keep working after the
-network it was built on has gone away. Building one by hand is a day of work,
-undocumented, and different every time — and the differences only surface in
-the field, where they cost the most.
+Emergency communications work begins at the moment the infrastructure everyone
+else depends on stops answering. The radios keep working. The computer beside
+the radio usually does not — not because it breaks, but because nearly
+everything useful on it quietly assumed a connection.
 
-This project builds that node from one script, in one pass, and then checks
-what actually landed on disk. It provisions positioning and time, HF and VHF
-digital modes, offline mapping, an offline reference library, packet and mesh
-tooling, and software-defined radio, onto a clean Linux Mint install.
+This project turns a clean Linux laptop into a communications workstation that
+assumes the opposite. Maps, reference material, message handling, position and
+time all come from the machine itself. It is built once, while a network still
+exists, in a single pass measured in an hour rather than a day — and it is
+built the same way every time, so two operators arriving at the same incident
+have the same node, and a fault understood on one is understood on all of them.
 
-What distinguishes it is not the software list. It is the discipline around
-two questions that field software usually answers badly: **does a check prove
-what it appears to prove**, and **what is this allowed to touch**. Both are
-treated as design constraints rather than documentation problems, and both are
-described here with the failures that produced them.
+It is radio-agnostic. It does not care which transceiver you own. It cares that
+there is one, that it has a data or accessory port, and that something can key
+it.
 
 ## The problem
 
-A field node is used when infrastructure is unavailable. That inverts several
-assumptions a normal install rests on:
+A node is needed precisely when the things a laptop leans on are gone. What
+goes away is broader than "the internet":
 
-- **No package server.** Anything not present at deployment time is not
-  available. Offline maps, reference material and codeplugs have to be staged
-  while the network still exists.
-- **No time server.** NTP pools are unreachable. A clock that drifts out of a
-  digital mode's timed transmit window makes a station deaf and inaudible with
-  no error message.
-- **No second attempt.** An operator discovering a misconfiguration in the
-  field has no way to fix it and often no way to diagnose it.
+- **Map and imagery services.** Every mainstream mapping tool streams tiles.
+  With no route to them, an operator has a blank window and a paper map in the
+  truck.
+- **Reference material.** Frequency plans, agency procedures, equipment
+  manuals, ICS forms — all of it normally a search away, none of it reachable.
+- **Time.** NTP pools are unreachable. A clock that drifts out of a digital
+  mode's timed transmit window makes a station deaf and inaudible, with no
+  error message to explain it.
+- **Software.** Anything not installed before deployment is not going to be
+  installed. There is no package server and no second attempt.
 
-Manual builds fail these quietly. Two nodes built by the same person a week
-apart differ, and nobody knows which differences matter until one of them does.
+The usual answer is to build a node by hand ahead of time. That works, and it
+costs a day, and it produces something undocumented. Two nodes built by the
+same person a week apart differ, and nobody learns which differences matter
+until one of them is in a parking lot at 0200 and the other is not.
 
-## Architecture
+The deeper problem is that a hand-built node cannot be *checked*. There is no
+list of what was supposed to be true, so there is no way to confirm it still
+is — after an OS update, after a laptop swap, after the machine sat in a
+cabinet for eight months.
 
-A single Python script drives everything. It presents five screens — options,
-administrator access, run, verification, summary — plus an operating-area
-screen that appears after the options only when the map step is selected. It
-carries fifteen independently selectable steps:
+## Who it is for, and when it is used
 
-| Step | What it covers |
+Written for volunteer and auxiliary communications: ARES, RACES and CERT-style
+groups, EOC support positions, and any deployment where internet and cellular
+service cannot be assumed.
+
+| Deployment | What the node contributes |
 |---|---|
-| Callsign / node ID | identity, hostname, passwordless sudo for the RF daemons |
-| System packages | the base stack and Wine initialisation |
-| Slim appliance build | removes desktop extras a field node does not need |
-| QLog + ion2G | station logging and the HF ALE data bridge |
-| Offline map tiles | raster pyramid for the declared operating area |
-| Offline knowledgebase | Kiwix ZIM archives |
-| Reference library | PDF manuals and a loopback-only document server |
-| App profiles | application configuration and the ALE channel plan |
-| Dock-trigger autostart | udev rule and autostart chain for the reference dock — unproven |
-| GPS time source | gpsd and chrony, bound to a declared receiver |
-| Direwolf | AX.25 / APRS software TNC |
-| Meshtastic CLI | LoRa mesh tooling |
-| dump1090 | ADS-B aircraft tracking |
-| SatDump | weather satellite imagery |
-| Desktop shortcuts | launchers for what was installed |
+| Shelter or EOC support position | Offline mapping of the affected area, the reference library, message handling by keyboard mode when voice nets are saturated, and a station log that survives the shift change |
+| Mutual aid, out of area | A node that matches the ones already on scene, with maps staged for an area the operator may never have worked, and no dependence on local infrastructure |
+| Extended field or search operation | Position and time from its own receiver, mesh peer positions plotted on the map, and a reference library that does not need a signal |
+| Training, drill and exercise | The same build under realistic conditions, so the exercise tests procedure rather than someone's laptop |
+| Readiness and bench work | A single pass rebuilds a node, or re-runs one step of it, which makes a cabinet full of laptops maintainable rather than archaeological |
 
-Steps are independent and not dependency-checked, deliberately. A single step
-can be re-run in isolation, which is what makes the script usable for
-development and repair rather than only for first builds.
+It suits a group that wants **standardisation without a full-time IT volunteer**.
+The build is reproducible, the result is inspectable, and a node handed to a
+new operator behaves like the one they trained on.
 
-Administrator access is collected on its own screen **after** the steps are
-chosen, and is not presented as an option to tick. Provisioning writes to
-`/etc`, installs packages, enables systemd units and adds a udev rule. It is a
-requirement of the run, and pretending otherwise would be a lie told by the
-user interface.
+## What a provisioned node can do
 
-## Method
+The stack is assembled from established open-source tools; the contribution
+here is that they arrive configured, verified, and stocked with offline data.
 
-### Presence is not capability
+| Capability | Provided by |
+|---|---|
+| Position and disciplined time with no network | `gpsd` and `chrony` bound to a declared GPS receiver |
+| Weak-signal keyboard messaging on HF | JS8Call |
+| Automatic link establishment on HF | ion2G, with a staged channel plan |
+| Packet and APRS over a sound-card interface | Direwolf, an AX.25 software TNC |
+| LoRa mesh text and position | Meshtastic tooling for an external mesh node |
+| Offline topographic and imagery mapping | QMapShack, with local tile pyramids registered for you |
+| Offline encyclopaedic reference | Kiwix ZIM archives |
+| Offline document library | A loopback-only web server over a staged PDF collection |
+| Aircraft situational awareness | ADS-B reception on a software-defined radio |
+| Independent weather imagery | Direct satellite reception and decoding |
+| Transceiver programming | CHIRP |
+| Station record | QLog |
 
-The recurring defect class in this project is a check that passes for work
-that did not happen. It has appeared in enough distinct forms to be treated as
-the default failure rather than an occasional one:
+### Position and time it can defend
 
-- A staged configuration file that copied cleanly but substituted nothing —
-  present, correct-looking, and inert.
-- A satellite tracking file that existed and contained zero entries, while the
-  row asserting it checked only that the path existed.
-- Four green rows attesting that dock automation files were written, on a
-  machine that has never seen a dock.
-- A map source registered under a key the installed application does not read,
-  listed in its interface and never drawn.
+A GPS receiver gives the node its own position and, through `chrony`, its own
+time — reaching stratum one without a network. This is the least glamorous
+capability and the one most likely to decide whether a digital mode works at
+all, because the timed modes need the clock to be right and will not tell you
+when it is not.
 
-The response is a rule rather than a fix: **a verification row reads content,
-not paths.** An observed full run ended with seventy such rows. They confirm that
-placeholders were substituted, that a declared device path resolves, that a
-configuration names a card this machine has, that a tile exists beneath the
-saved map view. Where a row cannot check the thing that matters, it says so in
-its own text instead of passing quietly.
+### Passing traffic when voice will not
 
-### No row that can only ever warn
+Three independent paths, chosen by band and conditions rather than by
+preference:
 
-A check that can never pass teaches people to skim past warnings, which
-defeats the screen it lives on. "Never observed keying a radio" is therefore a
-caveat attached to the row that describes the radio binding, not a row of its
-own.
+- **HF keyboard messaging** for regional and long-haul text when a voice net is
+  unworkable — weak-signal modes get through at signal levels that voice cannot.
+- **HF automatic link establishment**, for scheduled or unattended links using a
+  staged channel plan.
+- **Packet and APRS on VHF or UHF**, through any sound-card interface, for local
+  traffic, bulletins and position reporting.
 
-### Declared, never probed
+All three attach to the transceiver the group already owns. The node supplies
+the software, the configuration and the channel plan; the operator declares
+which audio device and which keying line to use.
 
-The provisioner does not search for hardware. An operator names the GPS
-receiver and the radio interface in configuration files; the provisioner
-substitutes those values and checks the paths exist.
+### A mesh layer that does not need a repeater
 
-This is a refusal to be clever, and the reason is specific. **Opening a serial
-port asserts its control lines.** A radio interface of the type this project
-targets keys its transmitter from one of those lines. A provisioner that swept
-`/dev/ttyUSB*` looking for hardware could put a station on the air without
-anyone asking it to — into an antenna that may not be connected, on a
-frequency nobody checked, under a callsign that may be a placeholder.
+Tooling for an external LoRa mesh node covers short text and position among a
+team on foot, independent of the licensed bands and of any infrastructure.
+Where mapping is also installed, peer positions are written out for import into
+the map — a file the operator refreshes, not a live overlay, which is stated
+plainly here because it is the sort of thing that disappoints in the field if
+it is promised as more.
 
-The same rule then pays for itself a second way. A GPS receiver and a radio
-interface both enumerate as `ttyUSB*`, and which one receives `ttyUSB0`
-depends on the order they were plugged in. Declared bindings use
-`/dev/serial/by-id/` paths, which are keyed on vendor, product and serial, and
-survive that.
+### The map, without the map servers
 
-Both bindings are excluded from version control, because a by-id path carries
-a device serial number. Samples ship; the filled-in files do not.
+Offline raster tiles are fetched for a declared operating area before
+deployment and registered with the mapping application so a layer is drawn on
+first launch. The view opens on the operating area with a grid over it. Nothing
+is streamed, nothing is cached from a live service, and nothing changes when
+the network goes.
 
-### Check the version in the field, not the tip
+The operating area is chosen by the operator, by coordinates and radius, so a
+node built for one region is not carrying somebody else's terrain.
 
-Two separate faults in this project came from reading a dependency's current
-source while the platform ships an older release.
+### Answers without a search engine
 
-The offline mapping application is the example. Its tile-source syntax gained
-brace-style template parameters in one version and the platform ships a
-version before it, so the sources written were requesting a file whose name
-was the literal template. Separately, that application renamed its map-list
-configuration group and moved activation into it — and on the shipped version,
-every activation key written was ignored, leaving maps listed in the interface
-and none drawn. Both produced an identical blank screen, which is why the
-first three explanations were wrong.
+Two reference systems, because they fail differently:
 
-The rule now stated in the project's own checklist: **confirm behaviour
-against the version that ships on the target platform**, not against the
-project's current source tree.
+- **An encyclopaedic archive** in ZIM format, read locally — the general
+  question, asked offline.
+- **A document library** of PDFs served on loopback only, for the specific
+  material a group actually needs: frequency plans, agency procedures, and
+  equipment manuals for gear nobody has memorised.
 
-## Data handling
+Loopback-only is deliberate. The library is for the operator at the keyboard,
+not a service offered to whatever network the node later finds itself on.
 
-**No operator or machine data is committed.** Shipped configuration uses
-substitution tokens filled in at provisioning time. The rule is enforced by
-verification rows that fail when a token survives, and by a check that a grid
-square field is empty rather than carrying one captured from whichever machine
-a profile came from.
+### Receive-only situational awareness
 
-This is a rule with history. Real data — a callsign, a grid square, audio
-device strings, absolute home paths — was once captured into this repository
-from a working node and required a full history rewrite to remove. The
-constraints above exist because that happened, not in anticipation of it.
+A software-defined receiver supports two uses the node can make of the
+spectrum without transmitting: **aircraft tracking** via ADS-B, useful where air
+assets are working an incident, and **direct weather satellite reception**,
+which produces imagery of local conditions from the spacecraft rather than from
+a forecast service that is no longer reachable.
 
-Device bindings that carry serial numbers are excluded from version control by
-pattern, and the exclusion is asserted by test rather than assumed.
+Both drive the same receiver and only one can hold it at a time, so aircraft
+tracking is left off at boot and started deliberately. A node that grabbed the
+receiver at startup would cost a satellite pass silently.
 
-## What is proven, and what is not
+### The station record
 
-A project of this kind is only as trustworthy as its account of its own
-limits. The distinction maintained throughout is between what has been
-**observed working on hardware** and what has been **written and checked but
-never exercised**.
+Logging is provisioned alongside the operating software, so a deployment
+produces a record rather than a stack of notes — which matters most when the
+shift changes and the next operator needs to know what has already been passed.
 
-**Observed on hardware:** provisioning completing and reporting honestly; ADS-B
-tracking live aircraft and releasing its receiver cleanly; weather satellite
-software building from source with its receiver visible in the recorder and a
-full tracking set loaded; a kernel driver blacklist surviving a device replug
-and a reboot; a GPS receiver reaching stratum one within about a minute of a
-cold boot with no network, twice; offline maps drawing from local tiles with
-the network pulled.
+## How a node is deployed
+
+Three phases, and the order is the point.
+
+1. **Build while a network still exists.** Run the provisioner, select the
+   steps this node needs, and let it install, configure and stage. Map tiles,
+   reference archives and the document library are pulled during this phase and
+   are the bulk of the time and disk.
+2. **Verify before it leaves the bench.** A read-only pass checks what actually
+   landed on disk and reports; it never repairs. A written checklist covers the
+   remainder — the parts no automated check can see, including anything
+   requiring a radio.
+3. **Operate cold.** From here the node needs no network and asks for none.
+
+Steps are independent and individually selectable, so a node can be repaired,
+extended or partially rebuilt later without starting again. A group running
+several nodes can build them to a common baseline and let individual machines
+differ where the assignment differs.
+
+Every run writes a transcript. If a build goes wrong, that file is what gets
+sent to whoever is helping.
+
+## What it is not
+
+- **Not a radio, and not a substitute for one.** It is the workstation beside
+  the radio.
+- **Not a licence and not training.** Transmitting on the amateur bands
+  requires an operator licence; the software says so where a callsign is
+  entered rather than only in documentation.
+- **Not an offline copy of the internet.** It carries what was staged onto it,
+  chosen by the group that built it.
+- **Not a turnkey appliance.** It is a reproducible build with an honest
+  account of its own state, which is a different and more useful thing.
+
+## Design commitments
+
+Three rules shape the build. Each was bought with a failure.
+
+- **A verification row reads content, not paths.** The recurring defect in
+  software of this kind is a check that passes for work that did not happen: a
+  staged profile that copied cleanly and substituted nothing, a tracking file
+  that existed and held zero entries, a map source registered under a key the
+  installed version does not read. An observed full run ended with seventy
+  rows, and they check what is inside the files.
+- **The node is told about its hardware; it never goes looking.** The operator
+  names the GPS receiver and the radio interface. The reason is not tidiness:
+  opening a serial port asserts its control lines, and a sound-card interface
+  keys its transmitter from one of them, so a provisioner that swept the serial
+  devices hunting for a radio could put a station on the air — into an antenna
+  that may not be connected, under a callsign that may be a placeholder.
+  Declared bindings also survive the fact that a GPS puck and a radio interface
+  both enumerate the same way, and which one comes up first depends on plug
+  order.
+- **No operator or machine data is committed.** Shipped configuration carries
+  substitution tokens filled in at provisioning time, and verification fails if
+  a token survives. Device bindings that carry a serial number are excluded
+  from version control. This is a rule with history: real data from a working
+  node was once captured into this repository and required a full history
+  rewrite to remove.
+
+## What has been proven, and what has not
+
+A project of this kind is only as trustworthy as its account of its own limits.
+The distinction maintained throughout is between what has been **observed
+working on hardware** and what has been **written and checked but never
+exercised**.
+
+**Observed on hardware:** provisioning completing and reporting honestly;
+ADS-B tracking live aircraft and releasing its receiver cleanly; weather
+satellite software built from source with its receiver visible and a full
+tracking set loaded; a kernel driver blacklist surviving a device replug and a
+reboot; a GPS receiver reaching stratum one within about a minute of a cold
+boot with no network, twice; offline maps drawing from local tiles with the
+network pulled.
 
 That last one is worth stating precisely, because it is the kind of claim this
 section exists to discipline. When it was first recorded, the map sources were
@@ -191,9 +251,9 @@ direct before-and-after on one machine separated the two.
   project to test against. It ships selectable and documented as in
   development, because a convenience feature failing to start is not a node
   that cannot communicate.
-- **No radio has been keyed.** The audio and PTT bindings are declared,
-  substituted and path-checked. Nothing in this project has put a signal on
-  the air.
+- **No radio has been keyed.** Audio and keying bindings are declared,
+  substituted and path-checked. Nothing in this project has put a signal on the
+  air.
 - **Verification checks the filesystem, not radio frequency.** No automated
   check covers anything requiring a transmitter or an antenna.
 
@@ -203,13 +263,15 @@ it is labelled as such in the source that uses it.
 
 ## Limits
 
-- **One reference platform.** The stack targets Linux Mint on a specific
-  rugged laptop. Other hardware is untested rather than unsupported.
+- **One reference platform.** The stack targets Linux Mint 22.x (XFCE) on
+  x86_64, typically a rugged ex-fleet laptop. Other hardware is untested
+  rather than unsupported, and one optional step is written for a specific
+  dock.
 - **One test bed.** Findings come from a small number of machines operated by
-  one person. Combinations that only appear at scale have not been seen.
+  one person. Failures that only appear at scale have not been seen.
 - **Steps are not dependency-checked.** Selecting a later step without an
-  earlier one may produce a node that verifies cleanly and does not work.
-  This is a deliberate trade for the ability to re-run a single step.
+  earlier one may produce a node that verifies cleanly and does not work. That
+  is a deliberate trade for the ability to re-run a single step.
 - **Offline data is operator-supplied.** Map tiles, reference archives and
   application profiles are fetched or staged by the operator. The repository
   ships the mechanism, not the content.
@@ -217,21 +279,16 @@ it is labelled as such in the source that uses it.
 ## Licensing
 
 Released under the **GNU General Public License v3.0 or later**. The licence
-text ships with every release archive; it is deliberately not excluded from
-the packaged artifact.
+text ships with every release archive; it is deliberately not excluded from the
+packaged artifact.
 
 Some capabilities require an amateur radio licence to operate legally on the
-air. Receiving is unrestricted; transmitting is not, and the software says so
-at the point where a callsign is configured rather than only in documentation.
+air. Receiving is unrestricted; transmitting is not.
 
 ## Closing
 
-The engineering claim this project makes is narrow and worth stating plainly:
-a field node should be reproducible, and a tool that builds one should be
-honest about what it has and has not established.
-
-Most of the design decisions recorded here were bought with a failure. The
-rules read as fussy in isolation — read content not paths, never probe a
-serial port, check the shipped version, do not write a row that can only warn
-— and each of them exists because the alternative already cost a day of
-testing or shipped something quietly wrong.
+The claim this project makes is narrow and worth stating plainly: a field node
+should be reproducible, and a tool that builds one should be honest about what
+it has and has not established. A group that deploys these knows what is on
+every machine, can rebuild one in an hour, and has a written account of which
+capabilities have been seen to work and which are still promises.
