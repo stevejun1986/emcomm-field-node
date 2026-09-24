@@ -316,9 +316,9 @@ first — its timed transmit windows want the clock inside about a second, and a
 node that has been off for a week can be far enough out to hear nothing and be
 heard by nobody, with silence as the only symptom.
 
-Verified end to end on the sibling project's command node with a GlobalSat
-BU-353N: cold boot, no network, GPS selected at stratum 1 within about a
-minute. Not yet run on an EmComm node.
+Verified end to end on a separate node running the hand-ported equivalent of
+this step, with a GlobalSat BU-353N: cold boot, no network, GPS selected at
+stratum 1 within about a minute. Not yet run on an EmComm node.
 
 **Naming the receiver.** Copy `configs/gps.conf.sample` to `configs/gps.conf`
 and set `DEVICE` to a by-id path:

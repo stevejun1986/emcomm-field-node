@@ -3714,9 +3714,9 @@ def _configure_satdump_tles(ctx: Ctx):
     # any -- observed on a clean clone as SatDump logging "0 TLEs loaded!"
     # with a working recorder. configs/ ships empty here by design, so that
     # was the default outcome of every EmComm run, not an edge case. This
-    # step was ported from the sibling repository, which *does* commit a
-    # curated set; the suppression came with it and the empty case never
-    # got its own answer.
+    # step was ported from a provisioner that *does* commit a curated set;
+    # the suppression came with it and the empty case never got its own
+    # answer.
     #
     # Leaving the fetch alone is what the checklist has always told the
     # operator to expect: "Open SatDump once, confirm the Tracking tab
@@ -3749,8 +3749,7 @@ def _configure_satdump_tles(ctx: Ctx):
         # never fires. The remaining `|| registry.size() == 0` is a deliberate
         # fallback for a node whose staged file failed to load, and it is why
         # the fetch lists must keep SatDump's real defaults: left empty that
-        # fallback truncates; left alone it fetches. See #26 and
-        # stevejun1986/s.t.n.d.-team-node#32.
+        # fallback truncates; left alone it fetches. See #26.
         satdump_global_cfg = Path("/usr/share/satdump/satdump_cfg.json")
         cfg_backup = Path(f"{satdump_global_cfg}.{PROJECT}-backup")
         if cfg_backup.is_file():
