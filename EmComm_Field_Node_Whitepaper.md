@@ -200,8 +200,10 @@ Three rules shape the build. Each was bought with a failure.
   software of this kind is a check that passes for work that did not happen: a
   staged profile that copied cleanly and substituted nothing, a tracking file
   that existed and held zero entries, a map source registered under a key the
-  installed version does not read. An observed full run ended with seventy
-  rows, and they check what is inside the files.
+  installed version does not read. A full run ends with several dozen such
+  rows, and the count grows with every check added. What matters is not the
+  number but that each row reads what is inside the file rather than
+  confirming the file is there.
 - **The node is told about its hardware; it never goes looking.** The operator
   names the GPS receiver and the radio interface. The reason is not tidiness:
   opening a serial port asserts its control lines, and a sound-card interface
