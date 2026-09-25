@@ -189,6 +189,8 @@ python3 tests/throttle.py   # pacing, backoff, behavior when rate-limited
 python3 tests/build.py      # build parallelism capped by memory, not cores
 python3 tests/isolation.py  # one failing step must not stop the others
 python3 tests/runlog.py     # the transcript on disk, and that it is the complete one
+python3 tests/maps.py       # what QMapShack is handed: sources, activation, first view
+python3 tests/radio.py      # the radio binding, the ModemManager rule, nothing opened
 ```
 
 `tests/dryrun.py` is a **diagnostic harness, not an assertion suite** — it prints
@@ -201,6 +203,51 @@ them with `xvfb-run -a`.
 Neither covers runtime behavior — real `apt`, real downloads, real extraction.
 A VM run is required before any deployment, and the hardware claims need the
 actual dock.
+
+### Test the step, not its source
+
+A test that greps the provisioner's source for a string proves the string is
+there. It does not prove the step does anything. That is this project's failure
+mode one level down: a check that passes for work that did not happen, with the
+test as the thing reporting success.
+
+It has gone wrong here in two ways:
+
+- **The substring also appears somewhere else.** `shutil.which("direwolf")` and
+  `proc.stdout` each appear more than once in the provisioner. A whole-file
+  assertion kept passing after the Direwolf step's own copies were deleted,
+  and only mutating those lines revealed it. A narrower slice can fall into the
+  same trap: inside the Direwolf verification block, a bare `read_text` also
+  matches the read of `direwolf.conf`.
+- **The sentence never appears assembled.** A log message split across adjacent
+  string literals is never in the source as one string. An assertion for the
+  full sentence fails against correct code, and the easy "fix" is to loosen it
+  until it matches something.
+
+Three rules follow:
+
+1. **Prefer driving the step.** Run the real function against a fixture: a
+   temporary `HOME`, a `configs/` built for the case, and a context whose `sudo`
+   and `sudo_write` record what they were given instead of running it. Then
+   assert on what was written and what was logged. `DryCtx` in
+   `tests/dryrun.py` already does this. That catches what a source assertion
+   cannot: a rule written malformed, a branch that never runs, a message that
+   never prints. If a test pulls functions out by `exec` instead of importing
+   the module, it has to supply every name they reference (`Ctx`, `os`,
+   `shutil`). A missing name fails the test, not the code.
+2. **When a source assertion is the right tool, scope it and match it
+   exactly.** Some claims are proofs of absence that no run can give, for
+   example "nothing in this path opens the device". Those belong in source.
+   Slice to the function's own region. Match the exact expression
+   (`Path(RADIO_MM_RULE).read_text`, not `read_text`). Match only text that is
+   contiguous in the file.
+3. **Mutate every new assertion before trusting it.** Break the line the
+   assertion guards, confirm the suite fails, then restore the line. An
+   assertion that survives a mutation of its own subject is decoration.
+
+`tests/radio.py` is still mostly source assertions. Converting it to drive
+`optional_direwolf` against fixtures, the way `tests/dryrun.py` drives every
+step, is outstanding.
 
 ---
 
