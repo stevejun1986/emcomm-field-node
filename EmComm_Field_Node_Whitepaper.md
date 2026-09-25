@@ -135,7 +135,7 @@ Two reference systems, because they fail differently:
   question, asked offline.
 - **A document library** of PDFs served on loopback only, for the specific
   material a group actually needs: frequency plans, agency procedures, and
-  equipment manuals for gear nobody has memorised.
+  equipment manuals for gear nobody has memorized.
 
 Loopback-only is deliberate. The library is for the operator at the keyboard,
 not a service offered to whatever network the node later finds itself on.

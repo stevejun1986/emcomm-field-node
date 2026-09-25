@@ -97,7 +97,7 @@ Five rules follow. They are not style preferences.
    handful of legitimate ones, so this is a read-and-judge check, not a
    pass/fail gate.
 2. **A success line lives inside the branch that earned it.** If a step can
-   partially succeed, say what worked and what did not — never summarise four
+   partially succeed, say what worked and what did not — never summarize four
    warnings as "successfully staged".
 3. **Substituting is not optional.** When a profile is copied, substitute the
    placeholder tokens, then verify the token is gone. A file that copies cleanly

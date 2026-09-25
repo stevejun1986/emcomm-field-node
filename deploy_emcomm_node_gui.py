@@ -995,7 +995,7 @@ class Ctx:
         another thread, and a no-op when nothing is running.
 
         SIGTERM to the process group, not the process: `make -j` and
-        `fetch_map_tiles.py` both have children of their own, and signalling
+        `fetch_map_tiles.py` both have children of their own, and signaling
         only the leader leaves those orphaned and still working.
         """
         with self._child_lock:
@@ -2077,7 +2077,7 @@ def step_config_profiles(ctx: Ctx):
                 f"it needs moving to {qms_conf} by hand; nothing is copied "
                 f"automatically, because a stale profile would overwrite a good one.",
                 "warn")
-    # A profile that is absent must not be summarised as "staged" — that is
+    # A profile that is absent must not be summarized as "staged" — that is
     # exactly how a node reaches the field on application defaults.
     staged, missing = [], []
 
@@ -4695,7 +4695,7 @@ class ProvisionerGUI(tk.Tk):
     def _spin_start(self, label: str):
         # The file gets a line when the work starts AND when it resolves. The
         # pane redraws one animated line in place; the file cannot, and the
-        # start line is what localises a run that hung rather than failed.
+        # start line is what localizes a run that hung rather than failed.
         if self.runlog:
             self.runlog.write(label, "spin")
         self.log_widget.configure(state="normal")
@@ -4937,7 +4937,7 @@ class ProvisionerGUI(tk.Tk):
         mb = total * tf.KB_PER_TILE / 1024
         mins = tf.estimate_seconds(total) / 60
         # "total", not "both layers": each row above already counts every layer,
-        # so labelling the sum that way reads as though the rows were per-layer.
+        # so labeling the sum that way reads as though the rows were per-layer.
         lines.append(f"  {'total':<16}          {total:>8,} tiles"
                      f"   ~{mb:,.0f} MB   ~{mins:,.0f} min")
         layers = " + ".join(layer for layer, _tms, _title in MAP_LAYERS)
@@ -5020,7 +5020,7 @@ class ProvisionerGUI(tk.Tk):
         # the options screen.
         self.sudo_cancel_warning = ttk.Label(
             f,
-            text=("\u26a0  Cancelling during a package install is the one unsafe stop.\n"
+            text=("\u26a0  Canceling during a package install is the one unsafe stop.\n"
                   "     Downloads, map-tile fetches and builds stop cleanly \u2014 partial work "
                   "stays on disk and re-running the step resumes it. But apt and dpkg are "
                   "left to finish on purpose: interrupting one mid-transaction can leave "
