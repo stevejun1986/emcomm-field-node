@@ -74,6 +74,28 @@ access to the conversation that produced it.
 
 ---
 
+## Working with the owner
+
+- **A short correction is evidence.** "That's not what happened" or "I had to
+  click it" is a report of what the machine did. It outranks anything read from
+  source. Do not argue it back.
+- **Ask for the observation before theorizing.** When the answer is on a node,
+  first ask for one command's output or one screenshot. A theory built from
+  upstream source is a guess until the node agrees.
+- **Ask how it is used before recommending.** Recommendations drawn from the
+  rules here have been wrong wherever real use differs. Nodes are docked only
+  while in use. Test hardware is limited and arrives piecemeal.
+- **A settled decision stays settled.** If a tool call is rejected or the task
+  is restated, carry out the restated task. Do not reopen the decision.
+- **If one reading of an instruction would undo work, ask in one line.** Never
+  guess toward the destructive reading.
+- **Report what a check covered, not that the work is done.** Say "the scan for
+  these patterns is clean", not "everything is en-US".
+- **Stay inside the named scope.** Flag nearby work; do not do it unasked.
+  "Standby" means standby.
+
+---
+
 ## The failure mode this project keeps producing
 
 **A step that reports success having done nothing.** It has shipped here more than
