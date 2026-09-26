@@ -365,7 +365,8 @@ assert "import tkinter" not in DIAG and "requests" not in DIAG, "stdlib only"
 for forbidden in ("write_text(", "write_bytes(", "mkdir(", "unlink(", "rmtree"):
     assert forbidden not in DIAG, "the diagnostic is read-only: %s" % forbidden
 assert DIAG.lstrip().startswith("#!/usr/bin/env python3"), "needs a shebang"
-assert "GNU General Public License" in DIAG, "shipped script needs the GPL notice"
+assert "SPDX-License-Identifier: MIT" in DIAG and "Permission is hereby granted" in DIAG, \
+    "shipped script needs its MIT notice"
 print("OK: the diagnostic is stdlib-only, read-only, and carries its notice")
 
 # It ships in the release archive, which is where an operator will need it.

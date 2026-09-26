@@ -51,6 +51,22 @@ not a problem; a change that implies it has been is. The distinction between
 deliberately throughout this repository, and it is the reason any of its claims
 are worth anything.
 
+## License of contributions
+
+**Contributions are accepted under the MIT License** ([`LICENSE-MIT`](LICENSE-MIT)),
+whichever file they touch. Opening a pull request states that you wrote the
+change, or otherwise have the right to submit it, and that you license it on
+those terms.
+
+The published licenses do not change: a GPL-3.0-or-later file stays
+GPL-3.0-or-later, and an MIT-licensed contribution can be carried in it because
+the two are compatible. What the MIT grant preserves is the ability to offer
+separate terms to an organization that cannot adopt GPL-3.0 software — see
+"Alternative licensing" in [`README.md`](README.md). That is only possible while
+every line of the project can be licensed that way.
+
+Do not copy code in from another GPL-licensed project, for the same reason.
+
 ## Testing
 
 `tests/` runs without a display, a network, or a radio:

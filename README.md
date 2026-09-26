@@ -1,6 +1,6 @@
 # EMCOMM Field Node — Provisioner
 
-[![License: GPLv3 or later](https://img.shields.io/badge/license-GPLv3%20or%20later-blue.svg)](LICENSE)
+[![License: GPLv3 or later, helper scripts MIT](https://img.shields.io/badge/license-GPLv3%2B%20%7C%20scripts%20MIT-blue.svg)](#license)
 [![Latest release](https://img.shields.io/github/v/release/stevejun1986/emcomm-field-node?include_prereleases&sort=semver)](https://github.com/stevejun1986/emcomm-field-node/releases)
 [![Platform: Linux Mint 22.x XFCE](https://img.shields.io/badge/platform-Linux%20Mint%2022.x%20XFCE-lightgrey.svg)](#platform)
 
@@ -376,10 +376,35 @@ nodes as you like, change it to suit your group. If you distribute a modified
 version, pass on the source under the same terms so the next group gets the same
 freedom — including whatever you fixed in the field.
 
+### MIT-licensed helper scripts
+
+Two standalone scripts are licensed under the **MIT License** instead. The text
+is in [`LICENSE-MIT`](LICENSE-MIT) and in each file's header:
+
+* `scripts/fetch_map_tiles.py` — the offline map tile fetcher
+* `scripts/diagnose_qmapshack_maps.py` — the QMapShack map diagnostic
+
+Each is useful on its own, outside this provisioner, and permissive terms let it
+be reused in tools that could not take on GPL-3.0. MIT is compatible with the
+GPL, so the package as a whole still ships under GPL-3.0-or-later. The
+provisioner, `deploy_emcomm_node_gui.py`, remains GPL.
+
+### Alternative licensing
+
+Some organizations — county IT departments, agency EOCs — work under policies
+that do not permit GPL-3.0 software. If that applies to yours, **open a GitHub
+issue** asking for separate license terms, naming the organization and the policy
+that applies. Terms can be granted to a single organization; the public license
+does not change.
+
+Check what the policy actually restricts first. The GPL places no conditions on
+running this software or on changing it for your own use; its conditions apply
+when copies are passed on to others.
+
 ### What this license covers
 
-The provisioner, the tile fetcher, the configuration templates and the
-documentation written for this repository.
+The provisioner, the configuration templates and the documentation written for
+this repository are GPL-3.0-or-later; the two helper scripts above are MIT.
 
 It does **not** cover third-party material that a deployment pulls in or that is
 later added to this tree. Reference manuals, map tiles, ZIM archives, `.deb`
@@ -389,5 +414,5 @@ that reason. **Before committing a third-party document into this repository,
 check that its license permits redistribution** — and record that license
 alongside it.
 
-Nothing in this license is a license to transmit. See the regulatory section
+Neither license is a license to transmit. See the regulatory section
 above.

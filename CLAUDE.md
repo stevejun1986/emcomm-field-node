@@ -428,8 +428,27 @@ this step" — and never link to an issue or a branch that a reader cannot open.
 
 ## License
 
-GPL-3.0-or-later. `LICENSE` is the FSF text verbatim; the provisioner and the tile
-fetcher each carry the per-file notice the GPL asks for. The grant covers this
+GPL-3.0-or-later, with two files under MIT. `LICENSE` is the FSF text verbatim
+and `LICENSE-MIT` the MIT text. Each shipped script carries its own notice: the
+GPL notice in the provisioner, the MIT notice (with the full permission text, so
+a copy lifted out on its own still carries its license) in
+`scripts/fetch_map_tiles.py` and `scripts/diagnose_qmapshack_maps.py`.
+`tests/maps.py` checks the diagnostic's.
+
+The split exists so that the owner can grant separate terms to an organization
+whose policy bars GPL-3.0 — "Alternative licensing" in `README.md`. That depends
+on the owner being able to license every line of the project, and two things
+would quietly end it:
+
+* **A contribution taken only under the GPL.** `CONTRIBUTING.md` states that
+  contributions are accepted under MIT. Keep that line.
+* **Code copied in from another GPL-licensed project.** Not into the provisioner,
+  and not into an MIT file, where it would also make the header false.
+
+Requests for separate terms arrive as GitHub issues. Granting them is the owner's
+decision; do not answer one on the owner's behalf.
+
+The grant covers this
 repository's own code, configuration templates and documentation — **not**
 third-party material a deployment pulls in or that is later committed here.
 Reference manuals, map tiles, ZIM archives, `.deb` packages and radio codeplugs
