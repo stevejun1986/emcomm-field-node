@@ -284,6 +284,12 @@ Released under the **GNU General Public License v3.0 or later**. The license
 text ships with every release archive; it is deliberately not excluded from the
 packaged artifact.
 
+Two standalone helper scripts — the map tile fetcher and the QMapShack map
+diagnostic — are MIT-licensed so they can be reused outside this project; the
+MIT text ships beside the GPL. An organization whose policy does not permit
+GPL-3.0 software can request separate terms through the project's issue
+tracker.
+
 Some capabilities require an amateur radio license to operate legally on the
 air. Receiving is unrestricted; transmitting is not.
 
