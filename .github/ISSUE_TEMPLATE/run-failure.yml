@@ -21,7 +21,7 @@ body:
         repeats it in its header. Without it a report cannot be matched to a
         tree — a tarball from a release and a clone of `main` can hit the same
         symptom for different reasons.
-      placeholder: v1.0.4
+      placeholder: v1.0.5
     validations:
       required: true
 
