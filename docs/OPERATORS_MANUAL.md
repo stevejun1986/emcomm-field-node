@@ -1,9 +1,9 @@
 # EmComm Field Node — Operator's Manual
 
-**Draft.** Describes the provisioner on `main`, which is **v1.0.3** — the GPS time
-source (Chapter 4) and the offline map fixes (Chapter 12) are both in that release.
-One chapter runs ahead of it: Chapter 9's radio interface binding is unmerged, and
-says so where it matters. Where the manual and a release differ, it follows `main`.
+**Draft.** Describes the provisioner on `main`, which is **v1.0.5**. Everything the
+manual covers is in that release: the GPS time source (Chapter 4), the radio interface
+binding and the ModemManager exclusion (Chapter 9), and the offline map fixes
+(Chapter 12). Where the manual and a release differ, it follows `main`.
 
 ---
 
@@ -14,8 +14,8 @@ It assumes the provisioner has run and the verification screen came back clean. 
 are building a node rather than using one, you want `README.md` and the
 `Pre-Deployment Config Checklist` instead.
 
-A copy can live on the node itself, served offline by its own document server — put
-the PDF in `docs/` before provisioning and it gets there. See **Chapter 3 — The
+A copy can live on the node itself, served offline by its own document server — build
+the PDF into `docs/` before provisioning and it gets there. See **Chapter 3 — The
 reference library**.
 
 ### What this node is
@@ -89,7 +89,7 @@ Confirmed on a real machine, with the result recorded in the project's issue his
 | Meshtastic CLI runs and reaches a node | `--info` connected first try |
 | The mesh-to-GPX bridge produces a valid GPX | live 9-node mesh, 4 peers with positions |
 | QMapShack imports that GPX | peers drawn as waypoints |
-| **Offline maps draw with no network** | 20,000-tile pyramid, topographic layer active on first launch, view on the operating area, UTM grid reading in metres |
+| **Offline maps draw with no network** | on a VM: 20,000-tile pyramid, topographic layer drawing once selected, view on the operating area, UTM grid reading in meters |
 
 ### Unproven
 
@@ -99,10 +99,12 @@ Installed and configured, but never confirmed working end to end. Treat these as
 | | Why it is unproven |
 |---|---|
 | **Dock-trigger autostart** | has never been observed to fire, on any hardware. Ships as a **future feature** by decision — see Chapter 20 |
-| **Direwolf PTT** | `PTT CM108` is a starting guess. CM108-style PTT over `/dev/hidraw*` has documented reliability problems on Linux |
-| **Direwolf audio device** | `ADEVICE plughw:1,0` is a placeholder and is very likely wrong for your interface |
+| **Direwolf PTT** | comes from `PTT_DEVICE` and `PTT_METHOD` in `configs/radio.conf`: declared and path-checked, never keyed. With no declaration the node ships `PTT CM108`, which does not key a Digirig Mobile. See Chapter 9 |
+| **Direwolf audio device** | comes from `ADEVICE` in `configs/radio.conf`. With no declaration it is the placeholder `plughw:1,0`, very likely wrong for your interface |
+| **ModemManager exclusion** | the udev rule is written from your declaration and verification reads it back. On the nodes it has run on, ModemManager flagged the interface and did not claim it, so the rule is insurance; nothing has been observed keying a radio, with or without it. See Chapter 9 |
 | **JS8Call operation** | no station profile ships; nothing has been keyed on-air from a provisioned node |
 | **GPS time source, on an EmComm node** | proven on a separate node running the hand-ported equivalent of this step — cold boot, no network, stratum 1 in about a minute, twice. It has not been run on an EmComm node. See Chapter 4 |
+| **Map layer drawing on first launch, on an EmComm node** | proven on a separate node running the hand-ported equivalent of this step — QMapShack 1.17.1, logged out and back in, nothing clicked, and the topographic layer drew over the operating area. The EmComm session, on a VM, predates that fix, and there the layer drew only once it had been selected. See Chapter 12 |
 | **SatDump TLE retention** | the setting that stops SatDump overwriting a curated element set is newly changed and unverified on a node |
 
 If you confirm one of these on your own hardware, that is worth recording — the project
@@ -216,11 +218,16 @@ restart needed.
 > A node provisioned from a stock clone has a working document server with nothing in it,
 > and the provisioner says so in its log. Filling it is a deployment step.
 
-**This manual is the exception, and it is the one document to put there first.** It is
-published as an asset on the release rather than inside the tarball: download
-`EmComm-Operators-Manual.pdf`, drop it in the provisioner's `docs/` directory *before*
-you run, and it arrives in the library with everything else. `scripts/build_manual.py`
-rebuilds it from the markdown source if you would rather build than download.
+**This manual is the exception, and it is the one document worth putting there first.**
+Its markdown source ships in the provisioner's `docs/` directory; no PDF ships, in the
+tarball or on a release. If you want it on the node, build it from the provisioner's
+directory *before* you run:
+
+    sudo apt install python3-reportlab       # once
+    python3 scripts/build_manual.py
+
+That writes `docs/EmComm-Operators-Manual.pdf`, and the run carries it into the library
+with everything else.
 
 Timing is the part that catches people: the provisioner copies what is in `docs/` at
 the moment that step runs and does not come back for more. Put the manual there
@@ -234,7 +241,7 @@ A field node's clock is a problem the moment it goes offline, and it is a proble
 announces itself as something else entirely.
 
 `chrony`'s stock configuration lists internet NTP pools. A deployed node cannot reach
-them, so it never synchronises, and it says so only if you ask:
+them, so it never synchronizes, and it says so only if you ask:
 
     $ chronyc tracking
     Leap status     : Not synchronised
@@ -327,7 +334,7 @@ provisioning runs happen with no receiver attached at all.
 ### When it does not work
 
 Four things break this silently — each one leaves a node that looks configured, logs no
-error, and never synchronises. The provisioner handles all four; they are listed because
+error, and never synchronizes. The provisioner handles all four; they are listed because
 a hand-configured node, or one someone has since edited, can lose any of them.
 
 | Symptom | Cause |
@@ -565,7 +572,38 @@ whatever you declared in `configs/radio.conf` rather than guessing:
    only check the path exists, precisely because opening it is what transmits. Nothing
    short of watching the radio tells you this works.
 
-**Files.** `~/.config/direwolf/direwolf.conf`, and a copy at `~/direwolf.conf`.
+### ModemManager is kept off the interface
+
+ModemManager probes an unknown serial port by **writing AT commands to it**. Writing
+opens the port, opening asserts RTS, and on an RTS-keyed interface that is a
+transmission nobody asked for.
+
+The Direwolf step writes a udev rule telling ModemManager to leave the declared
+interface alone:
+
+    /etc/udev/rules.d/99-emcomm-radio-no-modemmanager.rules
+
+It matches on the serial number inside the `/dev/serial/by-id/` path you declared, so
+it is written without scanning the bus or opening anything. **A numbered `PTT_DEVICE`
+carries no serial, so no rule can be written for one** — the step warns and says why.
+One more reason to declare the by-id path.
+
+* **It applies the next time the interface is attached**, not to a port something is
+  already holding. Connecting the radio last is what makes it land before anything can
+  key.
+* **Re-run the Direwolf step after changing interfaces.** The rule names one device. A
+  rule naming an interface you no longer use protects nothing, and looks like it does.
+* **To check it took**, with the interface attached:
+
+        udevadm info -q property -n /dev/serial/by-id/usb-... | grep ID_MM_DEVICE_IGNORE
+
+  `ID_MM_DEVICE_IGNORE=1` means udev applied it. Reading udev's database does not open
+  the port. The verification row **ModemManager excluded from the radio interface**
+  makes the same check, and warns when the rule names a different interface from the
+  one `configs/radio.conf` declares.
+
+**Files.** `~/.config/direwolf/direwolf.conf`, a copy at `~/direwolf.conf`, and the
+udev rule above.
 
 **Status: Unproven.** The config is generated correctly and `MYCALL` is verified, and the
 audio device and PTT path are now whatever you declared rather than a guess — but
@@ -576,7 +614,7 @@ radio key.
 ## Chapter 10 — Meshtastic: the LoRa mesh
 
 **What it is for.** Low-power, long-range text and position sharing among your own nodes.
-No infrastructure, no licence, and it works where HF is overkill and cell is gone.
+No infrastructure, no license, and it works where HF is overkill and cell is gone.
 
 **What the provisioner did.** Installed the Meshtastic CLI into your user site (not a
 virtual environment, so no activation step), added you to the `dialout` group so you can
@@ -676,9 +714,12 @@ again.** If peers have not moved in a while, confirm you are looking at fresh da
 concluding the mesh is quiet — a stationary node and a stale file look identical.
 
 **Status: Proven** — mesh peers imported and drawn from a bridge-generated GPX, and
-offline maps drawing from local tiles with no network: a 20,000-tile pyramid, the
-topographic layer active on first launch, the view on the operating area, and the UTM
-grid reading in metres.
+offline maps drawing from local tiles with no network, on a VM: a 20,000-tile pyramid,
+the view on the operating area, and the UTM grid reading in meters. **The layer drawing
+on first launch with nothing clicked is proven on a separate node running the
+hand-ported equivalent of this step, not yet on an EmComm node** — the EmComm session
+predates the fix described below, and there the layer drew only once it had been
+selected.
 
 ### Where the settings live
 
@@ -686,7 +727,7 @@ grid reading in metres.
 
 **Not `QLandkarteGT`.** That is the predecessor project, and earlier versions of this
 provisioner staged there — a directory QMapShack never opens. If your node has one, it
-has never been in effect. Move anything you customised across by hand; the provisioner
+has never been in effect. Move anything you customized across by hand; the provisioner
 will not do it for you, because a stale profile would overwrite a good one.
 
 QMapShack rewrites this file every time it closes. Anything you set by hand while it is
@@ -706,6 +747,12 @@ modes look alike from the outside. In order:
 The provisioner writes all three. If you are staring at an empty canvas, that table tells
 you which one to check, and the verification screen carries a row for each.
 
+**A node provisioned before v1.0.4 misses the second one.** Linux Mint 22 ships
+QMapShack 1.17.1, which reads the active source from the older `map/active` key; those
+provisioners wrote only the `map2/…` group that later versions read. The sources list in
+the Maps tab and nothing draws until one is selected. Re-running **App profiles + ALE
+channel plan** writes both; tiles already on disk are untouched.
+
 **Only the topographic layer is switched on.** Two active raster layers stack and the
 upper one hides the lower, which reads as the lower one being broken. Satellite imagery
 is listed and one click away in the Maps tab.
@@ -717,14 +764,14 @@ for anywhere else the first launch therefore opens on blank canvas, and the obvi
 — pan and zoom until you find your area — is the slow one, because every step asks the
 map source for tiles that do not exist.
 
-The provisioner seeds the view instead: centred on your operating area, at zoom 12, with
+The provisioner seeds the view instead: centered on your operating area, at zoom 12, with
 a grid set to your area's UTM zone. It only seeds. Once you have moved the view and
 closed the application, your position is the saved one and the provisioner leaves it
 alone on later runs.
 
 **The grid is UTM, not USNG.** QMapShack has no US National Grid or MGRS support — its
 grid takes a projection, not a grid system. UTM is what USNG is built on, so the lines
-fall exactly where USNG's do; the labels read as metres within the zone rather than as
+fall exactly where USNG's do; the labels read as meters within the zone rather than as
 USNG 100 km square letters. A position is transcribable to USNG but not readable as one
 off the screen. If you need true USNG strings, convert them — the map will not do it.
 
@@ -916,7 +963,7 @@ administrator access on its own screen, after you have chosen what to run.
 original run, selecting just that step is enough — the ones that succeeded are
 unaffected. A failing step no longer stops the steps after it.
 
-**On cancelling.** Cancel stops a download, a map-tile fetch or a build immediately.
+**On canceling.** Cancel stops a download, a map-tile fetch or a build immediately.
 Package installation is deliberately allowed to finish: interrupting `apt` or `dpkg`
 mid-transaction leaves the package system needing repair, which affects other software on
 the machine and not just this run. The administrator-access screen says so before the run
@@ -934,7 +981,7 @@ check.
 | **fail** | a real fault — act on it |
 
 **Two things it does not do.** It never repairs anything, and **it checks the filesystem,
-not behaviour.** A correctly-staged JS8Call profile says nothing about whether the radio
+not behavior.** A correctly-staged JS8Call profile says nothing about whether the radio
 keys up. Nothing needing hardware in the loop is — or can be — covered there.
 
 Warnings you should expect on a normal node, and which are not faults:
@@ -978,7 +1025,7 @@ SatDump reports the count bottom-left at startup:
 
 * **Zero** — no orbital data; it cannot predict a pass.
 * **Fewer than you expect** — an entry failed to parse, or an object has decayed out of
-  the catalogue. That is a curation problem, not a provisioning one.
+  the catalog. That is a curation problem, not a provisioning one.
 * **Passes at implausible times** — the elements are stale.
 
 ### Refreshing
@@ -1021,11 +1068,11 @@ interface asserts when something opens its port, and the dock autostart opens po
 Connect the radio last. See Chapter 2 and Chapter 9.
 
 **Offline time depends on hardware you supply.** A node with no GPS receiver has no
-reachable time source and never synchronises — silently. The GPS step fixes it, but
+reachable time source and never synchronizes — silently. The GPS step fixes it, but
 only once you have a receiver and have named it in `configs/gps.conf`. See Chapter 4.
 This matters most for JS8Call.
 
-**Verification checks files, not behaviour.** See Chapter 18.
+**Verification checks files, not behavior.** See Chapter 18.
 
 **The document library ships empty.** See Chapter 3.
 
@@ -1054,6 +1101,11 @@ conditions and the rules that apply to you are outside this manual entirely.
     rtl_test -t
     sudo service dump1090-mutability start
     sudo service dump1090-mutability stop && sudo pkill -x dump1090-mutability
+
+    # radio interface — none of these open the port
+    ls -l /dev/serial/by-id/           # the path to declare as PTT_DEVICE
+    arecord -l                         # the card to declare as ADEVICE
+    udevadm info -q property -n /dev/serial/by-id/usb-... | grep ID_MM_DEVICE_IGNORE
 
     # mesh
     meshtastic --nodes                 # peers; safe to share
@@ -1085,8 +1137,8 @@ Work down this list before deeper troubleshooting. Most faults are one of these.
 6. **`chronyc tracking` says `Not synchronised` with a GPS attached** → check
    `chronyc sources` for `GPS0`, then that `gpsd.service` is running. Reach `0` in
    the first minute after a cold start is normal (Chapter 4).
-7. **Direwolf hears nothing, or does not key** → `ADEVICE` and `PTT` are placeholders
-   (Chapter 9).
+7. **Direwolf hears nothing, or does not key** → check what `configs/radio.conf`
+   declares; with no declaration, `ADEVICE` and `PTT` are placeholders (Chapter 9).
 8. **Mesh peers have not moved in ages** → QMapShack is showing a stale file; reload it
    (Chapter 12).
 9. **SatDump reports `0 TLEs loaded!`** → no orbital elements (Chapter 19).
@@ -1119,8 +1171,12 @@ is worse than a thin one. Revised so far:
 | Landed on `main` | What it changed here |
 |---|---|
 | GPS time source (PR #54) | Chapter 4 rewritten from "not in this version" to a procedure; Chapter 1 gained the `/etc/` and `configs/` notes; Chapter 20, Appendix A and Appendix B updated; the Unproven table's time row restated |
-| Radio interface binding (PR #57) | Chapter 9 rewritten: the audio device and PTT come from `configs/radio.conf`, `PTT CM108` does not key a Digirig Mobile, and "connect the radio last". Chapter 2 gained the boot/dock rule, Chapter 20 both. **Open — unmerged, and no radio has been keyed** |
+| Radio interface binding (PR #57) | Chapter 9 rewritten: the audio device and PTT come from `configs/radio.conf`, `PTT CM108` does not key a Digirig Mobile, and "connect the radio last". Chapter 2 gained the boot/dock rule, Chapter 20 both. **Merged; shipped in v1.0.4. No radio has been keyed** |
 | Offline map fixes (PR #56) | Chapter 12 gained where the settings actually live, the seeded first view, the UTM-not-USNG grid, and what a blank canvas means. **Merged; shipped in v1.0.3** |
+| Map activation on QMapShack 1.17.1 (PR #59) | Chapter 12 gained the note on nodes provisioned before v1.0.4 and the re-run that fixes them. The first-launch claim moved to the Unproven table with its provenance stated, and the maps row now says it was a VM session. **Merged; shipped in v1.0.4** |
+| ModemManager exclusion (PR #63) | Chapter 9 gained the udev rule, how to check it took, and why a numbered path gets none; Appendix A gained the radio-interface commands; the Unproven table gained a row, and its Direwolf rows now read from `configs/radio.conf`. **Merged; shipped in v1.0.4** |
+| US spelling (v1.0.5) | Converted throughout. `Not synchronised` stays where it quotes `chronyc tracking`, because that is what the program prints. The front matter now describes v1.0.5 |
+| No PDF ships | Chapter 3, this appendix, checklist §15 and `docs/README.md`: the operator builds the PDF with `scripts/build_manual.py` if they want one. Nothing is attached to a release |
 
 ### Chapters most likely to be wrong
 
@@ -1160,14 +1216,11 @@ title bars included.
     # rebuild the PDF
     python3 scripts/build_manual.py
 
-The PDF is a build artifact and is not tracked: `docs/*.pdf` is gitignored, so it
-cannot ride along in a `git archive` of the repository. It reaches operators as an
-asset on the release instead, and the markdown source ships in the tarball beside
-this script for anyone who would rather build it.
-
-**Rebuild and re-attach it whenever the source changes**, or the release serves a
-manual that disagrees with its own repository — the two-copies drift this script
-exists to avoid.
+The PDF is a build artifact and is not tracked: `docs/*.pdf` is gitignored, and **no
+PDF ships** — not in the tarball, not on a release. The markdown source and this script
+ship in the tarball, and an operator who wants the PDF builds it (Chapter 3). There is
+one copy of the manual, and it is the markdown — the two-copies drift this script
+exists to avoid cannot start.
 
 Every part, chapter and appendix starts on its own page, so a chapter can be printed
 and handed over on its own.

@@ -11,19 +11,17 @@ distribute.
 
 ## The operator's manual
 
-`EmComm-Operators-Manual.pdf` is published as an asset on the release. **Download it
-and drop it in this directory before you provision**, and the node's own document
-server will carry it — which is the point, since the manual is most wanted on a node
-that has no network to fetch it over.
+`OPERATORS_MANUAL.md` is the source, and no PDF of it ships — not in the tarball,
+not on a release. If you want the manual on the node, build it from the
+provisioner's directory **before you provision**:
 
-It is not in the release tarball. PDFs here are `.gitignore`d, so a built manual
-cannot ride along in an archive of the repository; the markdown source does ship,
-and `scripts/build_manual.py` rebuilds the PDF from it if you would rather build
-than download:
+    sudo apt install python3-reportlab       # once
+    python3 scripts/build_manual.py
 
-    python3 scripts/build_manual.py          # needs reportlab
-
-Either way the PDF lands here and is picked up by the next provisioning run.
+The PDF lands here as `EmComm-Operators-Manual.pdf`, and the next provisioning run
+carries it to the node's own document server — which is the point, since the manual
+is most wanted on a node that has no network to fetch it over. PDFs here are
+`.gitignore`d, so a built copy never ends up in the repository.
 
 Commonly useful for an EMCOMM node:
 

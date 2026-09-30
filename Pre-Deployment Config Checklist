@@ -363,26 +363,25 @@ costs the node ten seconds of time source — which is why the verification row
 asks chronyd rather than opening the device.
 
 ## 15. Operator's Manual
-The node can serve its own manual, and a node that needs the manual is usually a
-node with no network to fetch it over. This costs one download and one file copy,
-and it has to happen *before* the run — the document server step copies whatever is
-in `docs/` at that moment and does not come back for more.
+Optional. The node can serve its own manual, and a node that needs the manual is
+usually a node with no network to fetch it over. No PDF ships, in the tarball or on
+a release: the markdown source is in `docs/`, and you build the PDF from it. It has
+to happen *before* the run — the document server step copies the PDFs in `docs/` at
+that moment and does not come back for more.
 
-Download `EmComm-Operators-Manual.pdf` from the release page and put it in `docs/`:
+From the provisioner's directory:
 
-    cp ~/Downloads/EmComm-Operators-Manual.pdf docs/
+    sudo apt install python3-reportlab       # once
+    python3 scripts/build_manual.py
 
-Or build it from the markdown source that ships in the tarball:
-
-    python3 scripts/build_manual.py          # needs reportlab
-
-Either way, confirm it landed after provisioning:
+That writes `docs/EmComm-Operators-Manual.pdf`. If you built it, confirm it landed
+after provisioning:
 
     ls ~/EMCOMM_Data/PDF_Manuals/
 
 and that it is reachable at `http://127.0.0.1:8085` with the network pulled. A run
-with an empty `docs/` warns rather than failing, so an absent manual is easy to miss
-until the node is somewhere you cannot fix it.
+with no PDF in `docs/` warns rather than failing, so an absent manual is easy to
+miss until the node is somewhere you cannot fix it.
 
 ## 16. Hardware
 A recommended and tested hardware list ships with the release, covering

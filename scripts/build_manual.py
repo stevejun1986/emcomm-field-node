@@ -116,7 +116,7 @@ def flush_table(rows, st, story):
             row.append(Paragraph("", st["cell"]))
     avail = 6.5 * inch
     # repeatRows: a table that splits across a page break otherwise continues
-    # with unlabelled columns, which for the failure tables means a page of
+    # with unlabeled columns, which for the failure tables means a page of
     # causes with no symptoms beside them.
     t = Table(data, colWidths=[avail / ncols] * ncols, hAlign="LEFT",
               repeatRows=1)
