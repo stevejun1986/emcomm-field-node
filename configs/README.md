@@ -55,7 +55,7 @@ Substitute these tokens; the provisioner replaces them at build time:
 | `MYCALL_PLACEHOLDER` | the callsign entered at the prompt |
 | `HOME_PLACEHOLDER` | the provisioning user's `$HOME` |
 
-Leave these **empty** rather than tokenised — nothing substitutes them, and a
+Leave these **empty** rather than tokenized — nothing substitutes them, and a
 literal token would be used as a real value:
 
 * `MyGrid` — a grid square is transmitted position data; let each operator set it
@@ -193,3 +193,16 @@ the device reports a serial number; most do, some cheap adapters do not.
 Opening a serial port asserts DTR, and some CAT interfaces key PTT on DTR or
 RTS — a sweep of `ttyUSB*` hunting for a GPS could put a radio on the air. You
 name the device; the provisioner touches nothing else.
+
+## `radio.conf` — the radio interface binding
+
+`radio.conf.sample` ships; your `radio.conf` does not. It names the sound card
+Direwolf uses and the device and control line that key the radio, so the
+provisioner substitutes real values instead of writing a guess.
+
+It is gitignored for the usual reason: a `/dev/serial/by-id/` path carries the
+interface's serial number, which is machine data.
+
+The provisioner never opens either device — opening a serial port asserts its
+control lines, and on an interface whose PTT hangs off one of them, that
+transmits. You name them; it checks the paths exist and nothing more.

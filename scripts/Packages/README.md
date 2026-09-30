@@ -4,8 +4,7 @@ Locally cached installers and assets, so a node can be built without re-fetching
 large downloads. Contents are `.gitignore`d — `.deb` packages are large and carry
 their own licensing.
 
-| Item | Used by |
-| --- | --- |
+Nothing is cached here by default; the directory ships empty.
 
 SatDump is **not** cached here. It is built from source on every node: upstream
 publishes `.deb` packages on GitHub releases but runs no apt repository, so a

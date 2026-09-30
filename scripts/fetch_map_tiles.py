@@ -3,18 +3,25 @@
 # EMCOMM Field Node provisioner
 # Copyright (C) 2026  WSNQ705
 #
-# This program is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
+# SPDX-License-Identifier: MIT
 #
-# This program is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
 #
-# You should have received a copy of the GNU General Public License
-# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+# The above copyright notice and this permission notice shall be included in all
+# copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
 #
 """
 Offline map tile fetcher for an EMCOMM Field Node.
@@ -53,9 +60,8 @@ from pathlib import Path
 
 # name -> (url template, description)
 # basemap.nationalmap.gov is case-sensitive on the /ArcGIS/ path segment.
-# The S.T.N.D. fetcher carries this as a hard-won note from a real run; this
-# script had it lowercase, which would fail every request before throttling
-# ever became the question.
+# Learned from a real run: this script had it lowercase, which would fail
+# every request before throttling ever became the question.
 SOURCES = {
     "topo": (
         "https://basemap.nationalmap.gov/ArcGIS/rest/services/USGSTopo/MapServer/tile/{z}/{y}/{x}",
@@ -95,16 +101,16 @@ OVERVIEW_ZOOMS = (10, 12)     # orientation level
 
 
 def box_from_center(lat: float, lon: float, radius_miles: float) -> dict:
-    """A bounding box `radius_miles` around a centre point.
+    """A bounding box `radius_miles` around a center point.
 
     Clamped to the Web Mercator latitude limit and to +/-180 longitude, so a
-    centre near a pole or near the antimeridian yields a valid box rather than
+    center near a pole or near the antimeridian yields a valid box rather than
     one the fetcher will reject. Near the poles cos(lat) collapses and the
     longitude span would otherwise run away.
     """
-    # Clamp the CENTRE first. Clamping only the edges of a box drawn around a
-    # centre beyond the Mercator limit yields south > north — a box the fetcher
-    # correctly refuses — so a centre at 89N is treated as one at 85N.
+    # Clamp the CENTER first. Clamping only the edges of a box drawn around a
+    # center beyond the Mercator limit yields south > north — a box the fetcher
+    # correctly refuses — so a center at 89N is treated as one at 85N.
     lat = max(-MAX_LAT, min(MAX_LAT, lat))
     lon = max(-180.0, min(180.0, lon))
     dlat = radius_miles / MILES_PER_DEG_LAT
@@ -192,7 +198,7 @@ MAX_BACKOFF = 60.0
 
 
 def _retry_after(err, attempt: int) -> float:
-    """How long to wait before retrying, honouring Retry-After when the server
+    """How long to wait before retrying, honoring Retry-After when the server
     sends one and falling back to exponential backoff with jitter. Jitter
     matters: without it every client that started together retries together."""
     header = getattr(err, "headers", None)
@@ -254,7 +260,7 @@ def main() -> int:
     )
     ap.add_argument("--area", type=Path, help="JSON file with north/south/east/west")
     ap.add_argument("--center-lat", type=float,
-                    help="centre latitude; with --center-lon and --radius-miles")
+                    help="center latitude; with --center-lon and --radius-miles")
     ap.add_argument("--center-lon", type=float)
     ap.add_argument("--radius-miles", type=float)
     ap.add_argument("--north", type=float)
@@ -362,7 +368,7 @@ def main() -> int:
                     # Give up loudly. Grinding out thousands of failures against
                     # a service that has repeatedly said no is worse than
                     # stopping: the operator gets no map either way, and only
-                    # one of the two is a good neighbour.
+                    # one of the two is a good neighbor.
                     if consecutive_throttles >= 10:
                         print(f"\n\nSTOPPED: {consecutive_throttles} consecutive throttle "
                               f"responses from the tile service.")

@@ -153,7 +153,7 @@ whose map step has not run. The waypoints load regardless.
 
 **Peer positions may be approximate.** A position arriving over the air is
 quantized by the channel's `positionPrecision`; on the mesh tested, at precision
-13, two nodes two kilometres apart reported identical coordinates to seven decimal
+13, two nodes two kilometers apart reported identical coordinates to seven decimal
 places. Only the local node's own position arrives at full GPS precision.
 
 ## Dock trigger: verifying it actually fires
@@ -317,6 +317,7 @@ python3 tests/flow.py       # the five screens and verification wiring
 python3 tests/area.py       # center/radius input, the estimate, the file it writes
 python3 tests/throttle.py   # pacing, backoff, and behavior when rate-limited
 python3 tests/maps.py       # where QMapShack's config goes, and what is in it
+python3 tests/radio.py      # the radio binding, and that nothing opens the port
 python3 tests/build.py      # build parallelism capped by memory, not cores
 python3 tests/isolation.py  # one failing step must not stop the others
 python3 tests/runlog.py     # the transcript on disk, and that it is the complete one

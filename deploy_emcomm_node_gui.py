@@ -71,8 +71,8 @@ Use these tokens instead; they are substituted at provisioning time:
 
 LICENSING
 Transmitting with JS8Call, ion2G HF ALE, Direwolf/APRS or on amateur
-DMR requires a valid amateur radio licence. Receive-only use does not.
-GMRS requires a GMRS licence; FRS, MURS and Meshtastic (915 MHz ISM) do
+DMR requires a valid amateur radio license. Receive-only use does not.
+GMRS requires a GMRS license; FRS, MURS and Meshtastic (915 MHz ISM) do
 not. The callsign entered at provisioning is written into the JS8Call
 profile — set a real, licensed callsign before transmitting.
 
@@ -156,7 +156,7 @@ except ImportError:
 #: asking git would report "unknown" on precisely the copy an operator runs.
 #: Bump it in the commit that precedes the tag, so a clone of main never
 #: claims to be a release it is ahead of.
-VERSION = "1.0.3"
+VERSION = "1.0.5"
 
 PROJECT         = "emcomm"
 OPERATOR_PREFIX = "EMCOMM"
@@ -247,16 +247,16 @@ def is_unmodified_sample(spec: dict) -> bool:
 def fetch_passes(spec: dict, tf) -> list:
     """[(description, bbox, (min_zoom, max_zoom))] for one operating area.
 
-    An area given as a centre and radius is fetched in two passes: full street
+    An area given as a center and radius is fetched in two passes: full street
     detail in the inner ring where a node actually navigates, and orientation
     zoom out to the full radius. Fetching the whole radius at street zoom is
     what turns a 150-mile area into a multi-hour, multi-gigabyte download —
     roughly 350,000 tiles against a public USGS endpoint.
 
-    A hand-written rectangle has no centre, so it gets a single pass.
+    A hand-written rectangle has no center, so it gets a single pass.
     """
-    centre = spec.get("center") or {}
-    lat, lon, radius = centre.get("lat"), centre.get("lon"), spec.get("radius_miles")
+    center = spec.get("center") or {}
+    lat, lon, radius = center.get("lat"), center.get("lon"), spec.get("radius_miles")
     if tf and lat is not None and lon is not None and radius:
         detail_r = min(float(spec.get("detail_radius_miles", tf.DETAIL_RADIUS_MILES)),
                        float(radius))
@@ -283,7 +283,7 @@ MAP_LAYERS = (
 # QMapShack settings
 #
 # QMapShack stores its settings through QSettings, which on Linux is an INI
-# file under the organisation name the application sets. QMapShack's main.cpp
+# file under the organization name the application sets. QMapShack's main.cpp
 # sets that to "QLandkarte", so the file is:
 #
 #     ~/.config/QLandkarte/QMapShack.conf
@@ -303,8 +303,26 @@ QMS_CONF_LEGACY_REL = Path(".config") / "QLandkarteGT" / "QMapShack.conf"
 # Seeding under a plain name is therefore stable across versions.
 QMS_VIEW_GROUP = "View 1"
 
+# QSettings percent-encodes the space when it WRITES a group name, so the
+# view QMapShack saves is "View%201" -- while a literal "View 1" in the file
+# reads back identically, because Qt unescapes on read. Both spellings work
+# going in; only one comes back out.
+#
+# That asymmetry is why every check below has to know both. A check that
+# knows only the literal form cannot see the group QMapShack itself wrote, so
+# on the second run it concludes there is no saved view and seeds one --
+# writing a second posFocus line over the operator's own. Seeding is supposed
+# to happen exactly once, on a profile that has never been opened.
+QMS_VIEW_GROUP_ENC = "View%201"
+
+
+def qms_view_prefixes() -> tuple:
+    """Both spellings of the view group prefix, the one Qt writes first."""
+    return ("Views\\%s\\" % QMS_VIEW_GROUP_ENC,
+            "Views\\%s\\" % QMS_VIEW_GROUP)
+
 # Square (tile-aligned) scales, which is the table that matches a slippy tile
-# pyramid: index i has MPIXEL / 2**(20 - i) metres per pixel, so
+# pyramid: index i has MPIXEL / 2**(20 - i) meters per pixel, so
 # zoomIndex = 20 - slippy_zoom over the 17 levels it defines (z4..z20).
 QMS_SCALES_SQUARE = 1
 QMS_ZOOM_BASE = 20
@@ -360,8 +378,8 @@ def _qt_ini_escape(raw: bytes) -> tuple:
 def qsettings_qpointf(x: float, y: float) -> str:
     """The exact INI text QSettings writes for QPointF(x, y).
 
-    Most of QMapShack's settings are plain text. The view centre is not: it is
-    a QPointF serialised as a binary QVariant, type id 26, two big-endian
+    Most of QMapShack's settings are plain text. The view center is not: it is
+    a QPointF serialized as a binary QVariant, type id 26, two big-endian
     doubles, escaped into the INI. There is no text form QMapShack will read
     instead -- QVariant::toPointF() on a string yields (0, 0).
     """
@@ -498,6 +516,10 @@ def configure_qmapshack(conf: Path, maps_dir: Path, tms_files: list,
     def has(key):
         return any(l.startswith(key + "=") for l in lines)
 
+    def has_view(suffix):
+        """True when EITHER spelling of the view group carries this key."""
+        return any(has(p + suffix) for p in qms_view_prefixes())
+
     # --- 1. the directory the .tms files live in --------------------------
     want_path = str(maps_dir)
     for i, line in enumerate(lines):
@@ -515,11 +537,29 @@ def configure_qmapshack(conf: Path, maps_dir: Path, tms_files: list,
         done["mapPath"] = "added"
 
     # --- 2. the maps themselves, so the first one draws -------------------
-    prefix = "Views\\%s\\map2\\" % QMS_VIEW_GROUP
+    # Two schemas, because which one the installed QMapShack reads depends on
+    # its version and the field build is older than the rename:
+    #
+    #   map2/keysKnownMaps + map2/<key>/isActive   current QMapShack
+    #   map/active = <key>, ...                    what came before it
+    #
+    # A build that predates map2 ignores those keys completely -- the maps
+    # still appear in the Maps tab, because loadMapList() scans mapPath and
+    # adds whatever it finds as Unused, but nothing is activated and the
+    # canvas stays empty until the operator clicks one. That is exactly the
+    # symptom this function exists to prevent, so both are written.
+    #
+    # Current QMapShack reads map/active too: loadMapList() applies it after
+    # map2, unconditionally, calling activate() on each key. The cost is that
+    # nothing ever deletes that legacy group there, so it re-activates on
+    # every launch. On the build this targets it is the native key and gets
+    # rewritten on exit, which is the trade being made.
+    vprefix = qms_view_prefixes()[0]
+    prefix = vprefix + "map2\\"
     present = [f for f in tms_files if f.is_file()]
     if not present:
         done["maps"] = "no .tms files to register"
-    elif has(prefix + "keysKnownMaps"):
+    elif has_view("map2\\keysKnownMaps") or has_view("map\\active"):
         done["maps"] = "kept"
     else:
         keys = [qms_map_key(f) for f in present]
@@ -528,20 +568,24 @@ def configure_qmapshack(conf: Path, maps_dir: Path, tms_files: list,
         adds.append((prefix + keys[0] + "\\isActive", "true"))
         adds.append((prefix + keys[0] + "\\filename",
                      _qms_text_value(str(present[0]))))
+        adds.append((vprefix + "map\\active", keys[0]))
         lines = _canvas_edit(lines, adds)
         done["maps"] = "registered %s as the active map" % present[0].name
 
     # --- 3. the view over the area ----------------------------------------
-    vprefix = "Views\\%s\\" % QMS_VIEW_GROUP
     if lat is None or lon is None:
         done["view"] = "no operating area"
-    elif has(vprefix + "posFocus"):
+    elif has_view("posFocus"):
         done["view"] = "kept"
     else:
         lines = _canvas_edit(lines, [
             (vprefix + "posFocus",
              qsettings_qpointf(math.radians(lon), math.radians(lat))),
             (vprefix + "map2\\zoomIndex", str(QMS_ZOOM_BASE - zoom)),
+            # Same split as the map list above: a build predating map2 reads
+            # the zoom index from map/, and ignoring that opened the canvas
+            # at whatever QMapShack defaulted to rather than over the area.
+            (vprefix + "map\\zoomIndex", str(QMS_ZOOM_BASE - zoom)),
             (vprefix + "scales", str(QMS_SCALES_SQUARE)),
             (vprefix + "grid\\proj", _qms_text_value(utm_proj_for(lat, lon))),
         ])
@@ -552,12 +596,12 @@ def configure_qmapshack(conf: Path, maps_dir: Path, tms_files: list,
     return done
 
 
-def area_centre(spec: dict) -> tuple:
+def area_center(spec: dict) -> tuple:
     """(lat, lon) for an operating area given either way, or None."""
-    centre = spec.get("center") or {}
-    if centre.get("lat") is not None and centre.get("lon") is not None:
+    center = spec.get("center") or {}
+    if center.get("lat") is not None and center.get("lon") is not None:
         try:
-            return float(centre["lat"]), float(centre["lon"])
+            return float(center["lat"]), float(center["lon"])
         except (TypeError, ValueError):
             return None
     try:
@@ -623,7 +667,7 @@ def rewrite_hosts(lines: list, hostname: str) -> list:
     return out
 
 
-class ProvisioningCancelled(Exception):
+class ProvisioningCanceled(Exception):
     """Raised between steps when the user hits Cancel."""
 
 
@@ -836,7 +880,7 @@ class Ctx:
     node_id: str
     askpass: AskpassSession
     log: Callable[[str, str], None]          # log(message, level)
-    cancel_check: Callable[[], None]          # raises ProvisioningCancelled
+    cancel_check: Callable[[], None]          # raises ProvisioningCanceled
     spin_start: Callable[[str], None]         # begin an animated "in progress" log line
     spin_stop: Callable[[bool], None]         # resolve it to a check mark / cross
     spin_progress: Callable[[str], None]      # update the trailing text of the active spin line
@@ -951,7 +995,7 @@ class Ctx:
         another thread, and a no-op when nothing is running.
 
         SIGTERM to the process group, not the process: `make -j` and
-        `fetch_map_tiles.py` both have children of their own, and signalling
+        `fetch_map_tiles.py` both have children of their own, and signaling
         only the leader leaves those orphaned and still working.
         """
         with self._child_lock:
@@ -971,7 +1015,7 @@ class Ctx:
         Almost everything that goes through sudo here is a package
         transaction -- apt, dpkg, debconf -- and killing one part-way leaves
         dpkg needing `dpkg --configure -a` before anything else can install.
-        A cancelled run that also breaks the package manager is a worse
+        A canceled run that also breaks the package manager is a worse
         outcome than one that takes another thirty seconds to stop.
 
         `make install` is the other sudo caller, and writing half a SatDump
@@ -1417,7 +1461,7 @@ Agree these with your group BEFORE deployment. Every node on the net
 must match region, preset and channel settings or they will not hear
 each other.
 
-    Band    : 915 MHz ISM (US) - no amateur licence required
+    Band    : 915 MHz ISM (US) - no amateur license required
     Preset  : LONG_FAST (default; longest range, lowest data rate)
     Channel : your group's agreed channel name
 
@@ -1612,7 +1656,7 @@ fetched area. The waypoints are still there.
 A NOTE ON PRECISION. A peer's position may be a mesh broadcast rather than
 a GPS reading, and broadcasts are quantized by the channel's
 positionPrecision. On the mesh above, at precision 13, two nodes two
-kilometres apart reported identical coordinates to seven decimal places.
+kilometers apart reported identical coordinates to seven decimal places.
 Treat a peer waypoint as "roughly here", not as a survey point -- the
 node's own position is the only one that arrives at full precision.
 
@@ -1731,7 +1775,7 @@ def step_system_packages(ctx: Ctx):
         wine_ok = ctx.run(["wineboot", "--init"], check=False).returncode == 0
         spin_result.ok = wine_ok
     if not wine_ok:
-        ctx.log("[!] wineboot --init failed — the Wine prefix is not initialised, and "
+        ctx.log("[!] wineboot --init failed — the Wine prefix is not initialized, and "
                 "ion2G will not run until it is.", "warn")
 
 
@@ -1805,7 +1849,7 @@ def step_qlog_ion2g(ctx: Ctx):
             ctx.sudo("flatpak", "remote-add", "--if-not-exists",
                      "flathub", "https://flathub.org/repo/flathub.flatpakrepo")
             # Through sudo. The remote above is a system installation, and a
-            # user-invoked install against it needs a polkit authorisation that
+            # user-invoked install against it needs a polkit authorization that
             # a GUI with no agent cannot obtain — the failure reads "Flatpak
             # system operation Deploy not allowed for user". finalize() also
             # looks for the exported .desktop under /var/lib/flatpak, which
@@ -1896,7 +1940,7 @@ def step_maps_fetch(ctx: Ctx):
 
         passes = fetch_passes(spec, tf)
         if not passes:
-            ctx.log(f"[!] {area_path} has neither a centre/radius nor all four of "
+            ctx.log(f"[!] {area_path} has neither a center/radius nor all four of "
                     f"north/south/east/west — skipped.", "err")
             fail_count += 1
             continue
@@ -2029,11 +2073,11 @@ def step_config_profiles(ctx: Ctx):
     legacy_conf = ctx.home / QMS_CONF_LEGACY_REL
     if legacy_conf.is_file():
         ctx.log(f"[!] {legacy_conf} exists and QMapShack does not read it — earlier "
-                f"runs of this provisioner staged there. Anything you customised in "
+                f"runs of this provisioner staged there. Anything you customized in "
                 f"it needs moving to {qms_conf} by hand; nothing is copied "
                 f"automatically, because a stale profile would overwrite a good one.",
                 "warn")
-    # A profile that is absent must not be summarised as "staged" — that is
+    # A profile that is absent must not be summarized as "staged" — that is
     # exactly how a node reaches the field on application defaults.
     staged, missing = [], []
 
@@ -2147,7 +2191,7 @@ def step_config_profiles(ctx: Ctx):
     # node unless a group supplies a profile -- mapPath was never written and
     # the maps this provisioner had just spent an hour downloading were
     # invisible to the application that exists to draw them.
-    centres = []
+    centers = []
     for area_path in sorted(AREA_DIR.glob("*.json")):
         try:
             spec = json.loads(area_path.read_text(errors="replace"))
@@ -2155,13 +2199,13 @@ def step_config_profiles(ctx: Ctx):
             continue
         if is_unmodified_sample(spec):
             continue
-        centre = area_centre(spec)
-        if centre:
-            centres.append(centre)
+        center = area_center(spec)
+        if center:
+            centers.append(center)
     # Several areas: the midpoint of them all, which puts the first view
-    # somewhere every area is reachable from rather than favouring one.
-    lat = sum(c[0] for c in centres) / len(centres) if centres else None
-    lon = sum(c[1] for c in centres) / len(centres) if centres else None
+    # somewhere every area is reachable from rather than favoring one.
+    lat = sum(c[0] for c in centers) / len(centers) if centers else None
+    lon = sum(c[1] for c in centers) / len(centers) if centers else None
 
     result = configure_qmapshack(
         qms_conf, ctx.data_dir / "Offline_Maps",
@@ -2187,13 +2231,13 @@ def step_config_profiles(ctx: Ctx):
                 "warn")
 
     if result["view"] == "no operating area":
-        ctx.log("[!] No operating area, so QMapShack keeps its built-in view centre "
+        ctx.log("[!] No operating area, so QMapShack keeps its built-in view center "
                 "(12E 49N, central Europe) and will open on empty canvas. Define an "
                 "area and re-run this step.", "warn")
     elif result["view"] == "kept":
-        ctx.log("[+] QMapShack already has a saved view centre — left as it is.", "ok")
+        ctx.log("[+] QMapShack already has a saved view center — left as it is.", "ok")
     else:
-        ctx.log(f"[+] QMapShack first view centred on {lat:.4f}, {lon:.4f} at zoom "
+        ctx.log(f"[+] QMapShack first view centered on {lat:.4f}, {lon:.4f} at zoom "
                 f"{QMS_DEFAULT_VIEW_ZOOM}, grid set to the area's UTM zone.", "ok")
         ctx.log("[*] QMapShack overwrites this file when it closes, so all of this is "
                 "a starting point, not a lock — move the view or switch layers and it "
@@ -2367,7 +2411,7 @@ def optional_gps_time(ctx: Ctx):
     """Give the node a time source that survives losing the network.
 
     Without this, chrony's only configured sources are internet NTP pools. A
-    deployed node cannot reach them, never synchronises, and `chronyc tracking`
+    deployed node cannot reach them, never synchronizes, and `chronyc tracking`
     reports "Not synchronised" indefinitely -- which matters most to JS8Call,
     whose timed transmit windows want the clock inside about a second.
     """
@@ -2443,15 +2487,246 @@ def optional_gps_time(ctx: Ctx):
             "`chronyc tracking` — Reference ID should read GPS0.", "info")
 
 
+def _read_radio_binding():
+    """(adevice, ptt_device, ptt_method) from configs/radio.conf, or Nones.
+
+    A declaration, never a probe -- the same rule the GPS step follows, and
+    for a sharper reason here. Opening a serial port asserts its control
+    lines, and this interface's PTT is wired to one of them, so a provisioner
+    that swept ttyUSB* looking for a radio could put one on the air.
+
+    configs/radio.conf is gitignored: a by-id path carries the interface's
+    serial number. configs/radio.conf.sample ships instead.
+    """
+    src = Path("configs") / "radio.conf"
+    if not src.is_file():
+        return None, None, None
+    values = {}
+    try:
+        for line in src.read_text(errors="replace").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, val = line.partition("=")
+            values[key.strip().upper()] = val.strip().strip('"').strip("'")
+    except OSError as e:
+        raise RuntimeError("could not read configs/radio.conf: %s" % e)
+    return (values.get("ADEVICE") or None,
+            values.get("PTT_DEVICE") or None,
+            values.get("PTT_METHOD") or None)
+
+
+def _alsa_card_ids() -> list:
+    """Card ids from /proc/asound/cards. Reads a file; opens no device."""
+    ids = []
+    try:
+        for line in Path("/proc/asound/cards").read_text(errors="replace").splitlines():
+            m = re.match(r"\s*(\d+)\s+\[([^\]]+)\]", line)
+            if m:
+                ids.append((int(m.group(1)), m.group(2).strip()))
+    except OSError:
+        pass
+    return ids
+
+
+def direwolf_ptt_line(device, method) -> str:
+    """The Direwolf PTT directive for a declared binding.
+
+    CM108 is a method rather than a device: Direwolf takes the chip's GPIO
+    with an optional /dev/hidraw* path. Everything else is a serial control
+    line and needs the port named first.
+    """
+    method = (method or "RTS").strip()
+    if method.upper() == "CM108":
+        return "PTT CM108" + (" " + device if device else "")
+    return "PTT %s %s" % (device, method)
+
+
+#: udev rule that keeps ModemManager away from the declared radio interface.
+RADIO_MM_RULE = "/etc/udev/rules.d/99-emcomm-radio-no-modemmanager.rules"
+
+
+def modemmanager_id_serial(ptt_device):
+    """ID_SERIAL for a /dev/serial/by-id/ path, or None if one cannot be read.
+
+    udev builds a by-id name as usb-<ID_SERIAL>-if<NN>-port<N>, so the value a
+    udev rule has to match on is already inside the path the operator
+    declared. Deriving it from the declaration rather than from the device is
+    the whole point: the rule can be written with the interface unplugged, and
+    nothing opens a port that keys a transmitter in order to find out what to
+    write.
+
+    A numbered path carries no serial, so this returns None and the caller
+    says why -- one more reason to declare the by-id form.
+    """
+    if not ptt_device:
+        return None
+    name = os.path.basename(ptt_device.strip())
+    if not name.startswith("usb-"):
+        return None
+    name = name[len("usb-"):]
+    # Most specific first: a serial number containing "-port" survives as long
+    # as the interface suffix is the thing at the end.
+    for pat in (r"-if[0-9a-fA-F]{2}-port\d+$", r"-if[0-9a-fA-F]{2}$", r"-port\d+$"):
+        m = re.search(pat, name)
+        if m:
+            name = name[:m.start()]
+            break
+    return name or None
+
+
+def radio_mm_rule_text(id_serial) -> str:
+    """The udev rule body, as a function so the step and the test agree."""
+    return (
+        "# EmComm Field Node - keep ModemManager off the radio interface.\n"
+        "#\n"
+        "# ModemManager probes an unknown serial port by WRITING AT commands to\n"
+        "# it. Writing opens the port, opening asserts RTS, and on this interface\n"
+        "# RTS is what keys the transmitter -- so a probe can put a station on\n"
+        "# the air that nobody asked to transmit, into an antenna that may not be\n"
+        "# connected, under a callsign that may be a placeholder.\n"
+        "#\n"
+        "# ID_SERIAL is the string udev builds the /dev/serial/by-id/ path from,\n"
+        "# so this match came out of the declaration in configs/radio.conf. The\n"
+        "# bus was never scanned, and nothing was opened to write it.\n"
+        "#\n"
+        "# Re-run the Direwolf step after changing interfaces. A rule naming a\n"
+        "# device you no longer use protects nothing and looks like it does.\n"
+        'ACTION=="add|change", SUBSYSTEM=="tty", ENV{ID_SERIAL}=="%s", '
+        'ENV{ID_MM_DEVICE_IGNORE}="1"\n' % id_serial
+    )
+
+
+def _udev_property(device, key):
+    """One property from udev's database for a device node, or None.
+
+    `udevadm info` reads the database and sysfs; it does not open the device.
+    That distinction is the reason this is safe to call against an interface
+    whose control lines key a transmitter, where reading the port is not.
+    """
+    try:
+        out = subprocess.run(["udevadm", "info", "-q", "property", "-n", device],
+                             stdin=subprocess.DEVNULL, capture_output=True, text=True)
+    except OSError:
+        return None
+    if out.returncode != 0:
+        return None
+    for line in out.stdout.splitlines():
+        k, _, v = line.partition("=")
+        if k == key:
+            return v
+    return None
+
+
 def optional_direwolf(ctx: Ctx):
     with ctx.spin("Installing Direwolf...") as spin_result:
-        status = ctx.sudo("apt", "install", "-y", "direwolf", check=False).returncode
+        proc = ctx.sudo("apt", "install", "-y", "direwolf", check=False)
+        status = proc.returncode
         spin_result.ok = (status == 0)
 
-    if status == 0:
-        ctx.log("[+] Direwolf installed.", "ok")
+    # The configuration is written whenever direwolf is actually present, not
+    # only when this run installed it. apt failing on a node that already has
+    # direwolf -- no network, a held lock, a partly-configured package -- used
+    # to skip the whole config block, leaving no direwolf.conf behind a green
+    # "Direwolf installed" verification row, because that row asks which() and
+    # not apt. The install and the configuration are two things, and one
+    # failing should not silently cancel the other.
+    present = shutil.which("direwolf") is not None
+    if status != 0:
+        # Not "the install failed": a non-zero exit from apt says the
+        # transaction ended badly, not that the package is absent or broken.
+        # apt returns non-zero for a held lock, a failing post-invoke hook, or
+        # a warning it was configured to treat as fatal, on a machine where
+        # the package was already installed and perfectly usable. Report the
+        # status and let the output below say what happened.
+        ctx.log("[!] apt exited %d. That is the transaction's status, not a "
+                "statement about the package — direwolf may be installed and "
+                "fine. apt said:" % status, "warn")
+        # ctx.sudo() captures stdout and stderr into a pipe, and this step used
+        # to read only the return code and drop the rest -- then tell the
+        # operator to check a log that had nothing in it. Say what apt said.
+        output = (proc.stdout or "").strip()
+        if output:
+            for line in output.splitlines()[-12:]:
+                ctx.log("    apt: " + line, "warn")
+        else:
+            ctx.log("    (apt produced no output)", "warn")
+
+    if status == 0 or present:
+        if status == 0:
+            ctx.log("[+] Direwolf installed.", "ok")
+        else:
+            ctx.log("[*] direwolf is already on PATH, so its configuration is written "
+                    "anyway — the failure above did not remove it.", "info")
         direwolf_config_dir = ctx.home / ".config" / "direwolf"
         direwolf_config_dir.mkdir(parents=True, exist_ok=True)
+
+        adevice, ptt_device, ptt_method = _read_radio_binding()
+
+        # Read-only reconnaissance, printed to help the operator fill the file
+        # in. /proc/asound/cards is a file read and by-id is a directory
+        # listing; neither opens a device, which matters because opening this
+        # one keys a transmitter.
+        cards = _alsa_card_ids()
+        if cards:
+            ctx.log("[*] Sound cards present: " + ", ".join(
+                "%d [%s]" % (n, i) for n, i in cards), "info")
+        by_id = sorted(Path("/dev/serial/by-id").glob("*")) \
+            if Path("/dev/serial/by-id").is_dir() else []
+        if by_id:
+            ctx.log("[*] Serial interfaces present: " + ", ".join(
+                p.name for p in by_id), "info")
+
+        if adevice:
+            audio_block = ("# Declared in configs/radio.conf.\nADEVICE %s" % adevice)
+            card_ids = [i for _n, i in cards]
+            m = re.search(r"CARD=([^,]+)", adevice)
+            if m and card_ids and m.group(1) not in card_ids:
+                ctx.log(f"[!] configs/radio.conf names sound card {m.group(1)!r}, which "
+                        f"is not present ({', '.join(card_ids) or 'no cards'}). Writing it "
+                        f"anyway — it will work once the interface is attached.", "warn")
+        else:
+            audio_block = ("# --- AUDIO DEVICE — UNVERIFIED PLACEHOLDER ---\n"
+                           "# ADEVICE was not declared, so this is a GUESS. Run `arecord -l`,\n"
+                           "# then set ADEVICE in configs/radio.conf.\n"
+                           "ADEVICE plughw:1,0")
+
+        if ptt_device or (ptt_method or "").upper() == "CM108":
+            ptt_block = ("# Declared in configs/radio.conf.\n"
+                         + direwolf_ptt_line(ptt_device, ptt_method))
+            if ptt_device and not Path(ptt_device).exists():
+                ctx.log(f"[!] configs/radio.conf names PTT device {ptt_device}, which is "
+                        f"not present. Writing it anyway — it will bind when the "
+                        f"interface is attached.", "warn")
+        else:
+            ptt_block = ("# --- PTT — UNVERIFIED PLACEHOLDER ---\n"
+                         "# No configs/radio.conf, so this is a GUESS, and for a Digirig\n"
+                         "# Mobile it is the wrong one: its PTT is an open-collector switch\n"
+                         "# on the CP2102 serial port's RTS line, not a CM108 GPIO. See\n"
+                         "# configs/radio.conf.sample.\n"
+                         "PTT CM108")
+
+        # ModemManager probes an unknown serial port by writing AT commands to
+        # it, and on this interface writing asserts RTS, which is what keys the
+        # transmitter. The remedy has been documented in the Meshtastic
+        # troubleshooting notes since that step was written; it was never
+        # installed for the one device where a stray probe transmits.
+        mm_serial = modemmanager_id_serial(ptt_device)
+        if mm_serial:
+            ctx.sudo_write(RADIO_MM_RULE, radio_mm_rule_text(mm_serial))
+            ctx.sudo("udevadm", "control", "--reload-rules", check=False)
+            ctx.log("[+] ModemManager exclusion installed for %s." % mm_serial, "ok")
+            ctx.log("[*] udev evaluates rules on the device event, so this applies the "
+                    "next time the interface is attached — not to a port something is "
+                    "already holding. Checklist section 4 says not to have a radio "
+                    "connected while the node is first configured; that ordering is "
+                    "what makes this land before anything can key.", "info")
+        elif ptt_device:
+            ctx.log("[!] %s is a numbered path, so no ModemManager exclusion was "
+                    "written — the rule matches on the serial that only the "
+                    "/dev/serial/by-id/ form carries. ModemManager probes unknown "
+                    "serial ports by writing to them, and writing asserts RTS. "
+                    "Declare the by-id path and re-run this step." % ptt_device, "warn")
 
         (direwolf_config_dir / "direwolf.conf").write_text(f"""# --- {OPERATOR_PREFIX} Direwolf Base Config ---
 # Callsign pulled from Node ID set during provisioning.
@@ -2460,17 +2735,11 @@ def optional_direwolf(ctx: Ctx):
 # is a real, currently-licensed callsign.
 MYCALL {ctx.node_id}
 
-# --- AUDIO DEVICE — UNVERIFIED PLACEHOLDER ---
-# Card index (plughw:1,0) is a GUESS. Verify with `arecord -l` against
-# your actual DigiRig before relying on this.
-ADEVICE plughw:1,0
+{audio_block}
 CHANNEL 0
 MODEM 1200
 
-# --- PTT — UNVERIFIED, KNOWN LINUX COMPATIBILITY ISSUES ---
-# DigiRig's CM108-style PTT via /dev/hidraw* has documented reliability
-# issues on Linux. Verify PTT actually keys the radio before field use.
-PTT CM108
+{ptt_block}
 
 AGWPORT 8000
 KISSPORT 8001
@@ -2480,9 +2749,25 @@ KISSPORT 8001
         home_symlink.unlink(missing_ok=True)
         home_symlink.symlink_to(direwolf_config_dir / "direwolf.conf")
         ctx.log(f"[+] Symlinked to {ctx.home}/direwolf.conf for Direwolf's default search path.", "ok")
-        ctx.log("[!] ADEVICE/PTT are UNVERIFIED placeholders — confirm against real hardware.", "warn")
+
+        if adevice and (ptt_device or (ptt_method or "").upper() == "CM108"):
+            ctx.log(f"[+] Radio interface declared: audio {adevice}, "
+                    f"{direwolf_ptt_line(ptt_device, ptt_method)}.", "ok")
+            ctx.log("[!] Declared, not proven. Nothing here has keyed a radio — watch it "
+                    "key before relying on the station to transmit.", "warn")
+        elif Path("configs/radio.conf").is_file():
+            ctx.log("[!] configs/radio.conf is present but does not declare both ADEVICE "
+                    "and PTT_DEVICE, so those are still placeholders and Direwolf will "
+                    "not work as shipped. Fill the empty values in and re-run this step. "
+                    "See checklist sections 3 and 4.", "warn")
+        else:
+            ctx.log("[!] No configs/radio.conf — ADEVICE/PTT left as placeholders and "
+                    "Direwolf will not work as shipped. Copy configs/radio.conf.sample, "
+                    "fill it in, and re-run this step. See checklist sections 3 and 4.",
+                    "warn")
     else:
-        ctx.log("[!] Direwolf install failed — check log above.", "err")
+        ctx.log("[!] direwolf is not on PATH either, so no configuration was written. "
+                "Fix the install and re-run this step.", "err")
 
 
 #: The mesh -> GPX bridge, written to the node by the Meshtastic step when
@@ -2561,7 +2846,7 @@ def node_position(node: dict):
     itself treats 0/0 as unset (`if position.latitude_i != 0 and ...`),
     so this does too. A node sitting on Null Island is indistinguishable
     from one with no fix, which is the library's convention, not a
-    judgement about the Gulf of Guinea.
+    judgment about the Gulf of Guinea.
     """
     pos = node.get("position") or {}
     lat = pos.get("latitude")
@@ -3114,7 +3399,7 @@ def optional_dump1090(ctx: Ctx):
 
     So seeding it false does not install "a service that does not start at
     boot" -- it installs a service that cannot be started at all. Boot
-    behaviour is a separate switch: dh_installinit runs `update-rc.d
+    behavior is a separate switch: dh_installinit runs `update-rc.d
     dump1090-mutability defaults` regardless of debconf, so the runlevel links
     are what have to be removed.
 
@@ -3429,9 +3714,9 @@ def _configure_satdump_tles(ctx: Ctx):
     # any -- observed on a clean clone as SatDump logging "0 TLEs loaded!"
     # with a working recorder. configs/ ships empty here by design, so that
     # was the default outcome of every EmComm run, not an edge case. This
-    # step was ported from the sibling repository, which *does* commit a
-    # curated set; the suppression came with it and the empty case never
-    # got its own answer.
+    # step was ported from a provisioner that *does* commit a curated set;
+    # the suppression came with it and the empty case never got its own
+    # answer.
     #
     # Leaving the fetch alone is what the checklist has always told the
     # operator to expect: "Open SatDump once, confirm the Tracking tab
@@ -3464,8 +3749,7 @@ def _configure_satdump_tles(ctx: Ctx):
         # never fires. The remaining `|| registry.size() == 0` is a deliberate
         # fallback for a node whose staged file failed to load, and it is why
         # the fetch lists must keep SatDump's real defaults: left empty that
-        # fallback truncates; left alone it fetches. See #26 and
-        # stevejun1986/s.t.n.d.-team-node#32.
+        # fallback truncates; left alone it fetches. See #26.
         satdump_global_cfg = Path("/usr/share/satdump/satdump_cfg.json")
         cfg_backup = Path(f"{satdump_global_cfg}.{PROJECT}-backup")
         if cfg_backup.is_file():
@@ -3700,7 +3984,7 @@ def _dump1090_default(key: str) -> Optional[str]:
     """One value out of /etc/default/dump1090-mutability.
 
     The init script sources this file, so what is in it is what actually
-    decides behaviour -- and two of its values decide whether ADS-B works at
+    decides behavior -- and two of its values decide whether ADS-B works at
     all. START_DUMP1090 gates every start; DUMP1090_USER is who the daemon
     runs as, and therefore who needs access to the dongle. Both the install
     step and the verification pass need to read them, so the parsing lives in
@@ -3895,8 +4179,8 @@ def verify_deployment(ctx: Ctx, selected_ids: set) -> list:
 
         has_view = "posFocus=" in conf_text
         add("QMapShack opens on the operating area", "pass" if has_view else "warn",
-            "view centre set" if has_view
-            else "no view centre — QMapShack will open on its built-in centre "
+            "view center set" if has_view
+            else "no view center — QMapShack will open on its built-in center "
                  "in central Europe, where this node has no tiles")
 
         want(home / ".local" / "share" / "CHIRP" / "analog_channels.csv",
@@ -4000,6 +4284,89 @@ def verify_deployment(ctx: Ctx, selected_ids: set) -> list:
                 add("Direwolf MYCALL set to this node", "fail",
                     "MYCALL=%r, expected %r" % (mycall, ctx.node_id))
         want(home / "direwolf.conf", "Direwolf config discoverable from $HOME", hard=False)
+
+        # Deliberately never opens the PTT device. This interface keys a
+        # transmitter from a serial control line, so a check that opened the
+        # port to confirm it works could put a radio on the air -- the same
+        # reason the GPS row asks chronyd instead of the receiver.
+        adevice, ptt_device, ptt_method = _read_radio_binding()
+        if adevice:
+            card_ids = [i for _n, i in _alsa_card_ids()]
+            m = re.search(r"CARD=([^,]+)", adevice)
+            present = (m.group(1) in card_ids) if (m and card_ids) else None
+            add("Direwolf audio device declared", "pass" if present is not False else "warn",
+                adevice if present is not False
+                else "%s names a card that is not attached (%s)" % (adevice, ", ".join(card_ids)))
+        else:
+            add("Direwolf audio device declared", "warn",
+                ("configs/radio.conf declares no ADEVICE" if Path("configs/radio.conf").is_file()
+                 else "no configs/radio.conf")
+                + " — ADEVICE is the shipped guess plughw:1,0 and is very likely wrong "
+                  "for your interface")
+
+        if ptt_device:
+            here = Path(ptt_device).exists()
+            # "declared, never observed" rather than a row of its own that can
+            # only ever warn: a check that can never pass teaches people to
+            # skim past warnings, which is the opposite of what this screen is
+            # for. The caveat belongs on the row it qualifies.
+            add("Direwolf PTT device declared", "pass" if here else "warn",
+                (direwolf_ptt_line(ptt_device, ptt_method)
+                 + " — declared and present; no node has observed it key a radio")
+                if here
+                else "%s is not present — attach the interface, or fix the path" % ptt_device)
+            if ptt_device.startswith("/dev/tty"):
+                add("Direwolf PTT device named by a stable path", "warn",
+                    "%s is a numbered path; a GPS receiver and a radio interface both "
+                    "enumerate as ttyUSB* and swap on plug order. Use /dev/serial/by-id/"
+                    % ptt_device)
+        elif (ptt_method or "").upper() == "CM108":
+            add("Direwolf PTT device declared", "pass",
+                "PTT CM108 — declared; no node has observed it key a radio")
+        else:
+            add("Direwolf PTT device declared", "warn",
+                ("configs/radio.conf declares no PTT_DEVICE" if Path("configs/radio.conf").is_file()
+                 else "no configs/radio.conf")
+                + " — PTT is the shipped guess 'CM108', which does not key a Digirig "
+                  "Mobile: its PTT is on the CP2102's RTS line")
+
+        # ModemManager probes an unknown serial port by writing AT commands to
+        # it, and on this interface writing asserts RTS, which keys the
+        # transmitter. A row for the rule that stops it has to read what the
+        # rule says: a file that exists but names an interface this node no
+        # longer uses protects nothing, and looks like it does.
+        #
+        # Where the interface is attached, udev's own database is the better
+        # answer than the file -- it says the rule matched, not merely that it
+        # was written. Reading that database does not open the port.
+        mm_serial = modemmanager_id_serial(ptt_device)
+        if mm_serial:
+            try:
+                rule = Path(RADIO_MM_RULE).read_text(errors="replace")
+            except OSError:
+                rule = ""
+            applied = (_udev_property(ptt_device, "ID_MM_DEVICE_IGNORE")
+                       if Path(ptt_device).exists() else None)
+            named = "ID_MM_DEVICE_IGNORE" in rule and mm_serial in rule
+            if applied == "1":
+                add("ModemManager excluded from the radio interface", "pass",
+                    "udev reports ID_MM_DEVICE_IGNORE=1 on the attached interface")
+            elif named and applied is None:
+                add("ModemManager excluded from the radio interface", "pass",
+                    "rule names %s; not attached, so udev has not applied it yet"
+                    % mm_serial)
+            elif named:
+                add("ModemManager excluded from the radio interface", "warn",
+                    "the rule names %s but udev has not applied it to the attached "
+                    "interface — replug it or reboot" % mm_serial)
+            elif rule:
+                add("ModemManager excluded from the radio interface", "warn",
+                    "%s does not name %s — re-run the Direwolf step after changing "
+                    "interfaces" % (RADIO_MM_RULE, mm_serial))
+            else:
+                add("ModemManager excluded from the radio interface", "warn",
+                    "no %s. ModemManager probes unknown serial ports by writing to "
+                    "them, and writing asserts RTS on this one" % RADIO_MM_RULE)
 
     if "meshtastic" in selected_ids:
         want(home / ".local" / "bin" / "meshtastic", "Meshtastic wrapper on PATH")
@@ -4299,7 +4666,7 @@ class ProvisionerGUI(tk.Tk):
         self.frames: dict = {}
         self.selected_ids: set = set()
         self.check_results: list = []
-        self.run_outcome: str = "unknown"     # completed | failed | cancelled
+        self.run_outcome: str = "unknown"     # completed | failed | canceled
         self.failed_steps: list = []          # steps that raised, by label
         self.area_file = None                 # written by the area screen, if shown
 
@@ -4328,7 +4695,7 @@ class ProvisionerGUI(tk.Tk):
     def _spin_start(self, label: str):
         # The file gets a line when the work starts AND when it resolves. The
         # pane redraws one animated line in place; the file cannot, and the
-        # start line is what localises a run that hung rather than failed.
+        # start line is what localizes a run that hung rather than failed.
         if self.runlog:
             self.runlog.write(label, "spin")
         self.log_widget.configure(state="normal")
@@ -4475,7 +4842,7 @@ class ProvisionerGUI(tk.Tk):
         ttk.Label(f, text="Operating Area",
                   font=("TkDefaultFont", 14, "bold")).pack(anchor="w")
         ttk.Label(f,
-                  text=("Offline map tiles are fetched around a centre point. Full street "
+                  text=("Offline map tiles are fetched around a center point. Full street "
                         "detail is kept within the inner ring where a node actually "
                         "navigates; the rest of the radius is covered at orientation zoom. "
                         "Fetching the whole radius at street zoom is what turns a wide area "
@@ -4484,13 +4851,13 @@ class ProvisionerGUI(tk.Tk):
 
         form = ttk.Frame(f)
         form.pack(fill="x")
-        ttk.Label(form, text="Centre latitude:").grid(row=0, column=0, sticky="w", pady=4)
+        ttk.Label(form, text="Center latitude:").grid(row=0, column=0, sticky="w", pady=4)
         self.lat_var = tk.StringVar()
         ttk.Entry(form, textvariable=self.lat_var, width=14).grid(row=0, column=1, sticky="w", padx=8)
         ttk.Label(form, text="decimal degrees, e.g. 39.00 (N positive)",
                   foreground="#888888").grid(row=0, column=2, sticky="w")
 
-        ttk.Label(form, text="Centre longitude:").grid(row=1, column=0, sticky="w", pady=4)
+        ttk.Label(form, text="Center longitude:").grid(row=1, column=0, sticky="w", pady=4)
         self.lon_var = tk.StringVar()
         ttk.Entry(form, textvariable=self.lon_var, width=14).grid(row=1, column=1, sticky="w", padx=8)
         ttk.Label(form, text="decimal degrees, e.g. -77.00 (W negative)",
@@ -4526,11 +4893,11 @@ class ProvisionerGUI(tk.Tk):
         for var in (self.lat_var, self.lon_var, self.radius_var):
             var.trace_add("write", lambda *_a: self._update_area_estimate())
 
-    def _parse_centre(self):
+    def _parse_center(self):
         """(lat, lon) rounded to 2 dp, or None with the reason in area_error.
 
         More precision is accepted and rounded rather than rejected — 2 dp is
-        about 1.1 km, ample for a map centre, and refusing 39.123 would only
+        about 1.1 km, ample for a map center, and refusing 39.123 would only
         annoy someone reading coordinates off a GPS.
         """
         try:
@@ -4549,15 +4916,15 @@ class ProvisionerGUI(tk.Tk):
 
     def _update_area_estimate(self, *_a):
         self.area_error.configure(text="")
-        centre = self._parse_centre()
-        if centre is None:
-            self.area_estimate.configure(text="Enter a centre to see the download estimate.")
+        center = self._parse_center()
+        if center is None:
+            self.area_estimate.configure(text="Enter a center to see the download estimate.")
             return
-        lat, lon = centre
+        lat, lon = center
         tf = load_tile_fetcher()
         if tf is None:
             self.area_estimate.configure(
-                text=f"centre {lat:.2f}, {lon:.2f}   (estimate unavailable — "
+                text=f"center {lat:.2f}, {lon:.2f}   (estimate unavailable — "
                      f"{TILE_FETCHER} could not be loaded)")
             return
         radius = self.radius_var.get()
@@ -4570,22 +4937,22 @@ class ProvisionerGUI(tk.Tk):
         mb = total * tf.KB_PER_TILE / 1024
         mins = tf.estimate_seconds(total) / 60
         # "total", not "both layers": each row above already counts every layer,
-        # so labelling the sum that way reads as though the rows were per-layer.
+        # so labeling the sum that way reads as though the rows were per-layer.
         lines.append(f"  {'total':<16}          {total:>8,} tiles"
                      f"   ~{mb:,.0f} MB   ~{mins:,.0f} min")
         layers = " + ".join(layer for layer, _tms, _title in MAP_LAYERS)
         self.area_estimate.configure(
-            text=f"centre {lat:.2f}, {lon:.2f} — radius {radius} mi   "
+            text=f"center {lat:.2f}, {lon:.2f} — radius {radius} mi   "
                  f"({layers}; every figure covers both)\n" + "\n".join(lines))
 
     def _on_area_continue(self):
-        centre = self._parse_centre()
-        if centre is None:
+        center = self._parse_center()
+        if center is None:
             if not self.area_error.cget("text"):
                 self.area_error.configure(
-                    text="Enter a centre latitude and longitude in decimal degrees.")
+                    text="Enter a center latitude and longitude in decimal degrees.")
             return
-        lat, lon = centre
+        lat, lon = center
         radius = self.radius_var.get()
         node = hostname_from_node_id(self.node_id_var.get().strip()) or "node"
         tf = load_tile_fetcher()
@@ -4653,7 +5020,7 @@ class ProvisionerGUI(tk.Tk):
         # the options screen.
         self.sudo_cancel_warning = ttk.Label(
             f,
-            text=("\u26a0  Cancelling during a package install is the one unsafe stop.\n"
+            text=("\u26a0  Canceling during a package install is the one unsafe stop.\n"
                   "     Downloads, map-tile fetches and builds stop cleanly \u2014 partial work "
                   "stays on disk and re-running the step resumes it. But apt and dpkg are "
                   "left to finish on purpose: interrupting one mid-transaction can leave "
@@ -4786,7 +5153,7 @@ class ProvisionerGUI(tk.Tk):
         btns.pack(fill="x", pady=(10, 0))
         self.cancel_btn = ttk.Button(btns, text="Cancel", command=self._on_cancel)
         self.cancel_btn.pack(side="left")
-        # Re-labelled "Continue \u2192" once the run ends: from then on this screen
+        # Re-labeled "Continue \u2192" once the run ends: from then on this screen
         # is the log archive, reachable from both later screens.
         self.close_btn = ttk.Button(btns, text="Close", command=self._on_run_screen_forward,
                                      state="disabled")
@@ -4933,8 +5300,8 @@ class ProvisionerGUI(tk.Tk):
         ran = [c.label for c in COMPONENTS if c.id in self.selected_ids]
         skipped = len(COMPONENTS) - len(ran)
 
-        if self.run_outcome == "cancelled":
-            title, tag = "Provisioning cancelled", "warn"
+        if self.run_outcome == "canceled":
+            title, tag = "Provisioning canceled", "warn"
         elif self.run_outcome == "failed" or failed:
             title, tag = "Provisioning finished with problems", "err"
         elif warned:
@@ -5045,7 +5412,7 @@ class ProvisionerGUI(tk.Tk):
     # -- worker thread ------------------------------------------------------
     def _cancel_check(self):
         if self.cancel_event.is_set():
-            raise ProvisioningCancelled()
+            raise ProvisioningCanceled()
 
     def _queue_log(self, message: str, level: str = "info"):
         self.msg_queue.put(("log", message, level))
@@ -5065,7 +5432,7 @@ class ProvisionerGUI(tk.Tk):
                 # must not cost the operator the twelve that would have worked.
                 try:
                     comp.fn(ctx)
-                except ProvisioningCancelled:
+                except ProvisioningCanceled:
                     raise                       # a cancel is not a step failure
                 except subprocess.CalledProcessError as e:
                     failed.append(comp.label)
@@ -5083,8 +5450,8 @@ class ProvisionerGUI(tk.Tk):
             self.failed_steps = list(failed)
             self.msg_queue.put(("done", not failed, ctx.node_id))
             self._queue_verification(ctx, selected_ids)
-        except ProvisioningCancelled:
-            self.msg_queue.put(("cancelled", None, None))
+        except ProvisioningCanceled:
+            self.msg_queue.put(("canceled", None, None))
             # Still verify: what did land before the stop is the useful part.
             self._queue_verification(ctx, selected_ids)
         except Exception as e:      # noqa: BLE001 — something outside any step
@@ -5195,10 +5562,10 @@ class ProvisionerGUI(tk.Tk):
                         self.run_outcome = "failed"
                         self.step_label.configure(text="Provisioning failed — see log")
                     self._begin_verification()
-                elif kind == "cancelled":
-                    self.run_outcome = "cancelled"
-                    self.step_label.configure(text="Cancelled")
-                    self._append_log("=== Cancelled by user ===", "warn")
+                elif kind == "canceled":
+                    self.run_outcome = "canceled"
+                    self.step_label.configure(text="Canceled")
+                    self._append_log("=== Canceled by user ===", "warn")
                     self.cancel_btn.configure(state="disabled")
                     self.close_btn.configure(state="normal")
                     self._begin_verification()

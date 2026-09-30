@@ -21,8 +21,8 @@ decisions.
 **That rule runs both ways, and the other direction is the one that gets missed.
 Related changes to one subsystem ship together, not one PR per instruction.**
 
-A behaviour change and the documentation it creates or invalidates belong in the
-same PR. So does the verification row that checks the behaviour, the checklist
+A behavior change and the documentation it creates or invalidates belong in the
+same PR. So does the verification row that checks the behavior, the checklist
 entry the operator now needs, and the sample config the change requires. If
 landing the code leaves the repository describing something that is no longer
 true — even for an hour — the pieces were not separable.
@@ -33,7 +33,7 @@ PR reads as a considered change. Same diff, different story about how it was
 built.
 
 The rule bites hardest when work arrives as a sequence of requests. Each one in
-isolation looks like its own PR; together they are one change. **Recognising that
+isolation looks like its own PR; together they are one change. **Recognizing that
 is the agent's job, not the owner's** — say "these are one change, I will land
 them together" rather than executing each request separately and leaving the
 owner to notice afterwards.
@@ -60,17 +60,39 @@ files. A claim with no evidence under WHY is an assertion, and the next reader
 cannot check it.
 
 **THE FIX** — what was done, and any structural decision worth recording — why
-a constant was centralised rather than corrected in place, why a rename was
+a constant was centralized rather than corrected in place, why a rename was
 chosen over an exclusion list.
 
 Close with what was verified and what was not.
 
 Omit second-person address, pleasantries, and narration of the author's process.
-`Your screenshot showed the total mislabelled` is `The estimate labelled the sum
+`Your screenshot showed the total mislabeled` is `The estimate labeled the sum
 "both layers" while each row already counted every layer`. `I fixed it
 structurally` is `Pacing defaults are defined once in the fetcher and imported
 by the GUI`. The body is a record for whoever reads the log in a year with no
 access to the conversation that produced it.
+
+---
+
+## Working with the owner
+
+- **A short correction is evidence.** "That's not what happened" or "I had to
+  click it" is a report of what the machine did. It outranks anything read from
+  source. Do not argue it back.
+- **Ask for the observation before theorizing.** When the answer is on a node,
+  first ask for one command's output or one screenshot. A theory built from
+  upstream source is a guess until the node agrees.
+- **Ask how it is used before recommending.** Recommendations drawn from the
+  rules here have been wrong wherever real use differs. Nodes are docked only
+  while in use. Test hardware is limited and arrives piecemeal.
+- **A settled decision stays settled.** If a tool call is rejected or the task
+  is restated, carry out the restated task. Do not reopen the decision.
+- **If one reading of an instruction would undo work, ask in one line.** Never
+  guess toward the destructive reading.
+- **Report what a check covered, not that the work is done.** Say "the scan for
+  these patterns is clean", not "everything is en-US".
+- **Stay inside the named scope.** Flag nearby work; do not do it unasked.
+  "Standby" means standby.
 
 ---
 
@@ -97,7 +119,7 @@ Five rules follow. They are not style preferences.
    handful of legitimate ones, so this is a read-and-judge check, not a
    pass/fail gate.
 2. **A success line lives inside the branch that earned it.** If a step can
-   partially succeed, say what worked and what did not — never summarise four
+   partially succeed, say what worked and what did not — never summarize four
    warnings as "successfully staged".
 3. **Substituting is not optional.** When a profile is copied, substitute the
    placeholder tokens, then verify the token is gone. A file that copies cleanly
@@ -153,8 +175,8 @@ Shipped profiles use substitution tokens, filled in at provisioning time:
 `configs/` and `docs/` ship **empty on purpose**. Each group runs its own
 frequencies, its own operating area and its own document set, and a profile
 captured from a working install carries that operator's callsign, grid square,
-absolute home path and audio device names. The sibling repository had to be
-rewritten with `git filter-repo` to remove exactly that. Do not repeat it.
+absolute home path and audio device names. A repository built this way had to
+be rewritten with `git filter-repo` to remove exactly that. Do not repeat it.
 
 Before committing anything under `configs/`: no real callsign, no grid square
 (`MyGrid=` stays empty), no `alsa_output.*` device names, no absolute `/home/...`
@@ -189,6 +211,8 @@ python3 tests/throttle.py   # pacing, backoff, behavior when rate-limited
 python3 tests/build.py      # build parallelism capped by memory, not cores
 python3 tests/isolation.py  # one failing step must not stop the others
 python3 tests/runlog.py     # the transcript on disk, and that it is the complete one
+python3 tests/maps.py       # what QMapShack is handed: sources, activation, first view
+python3 tests/radio.py      # the radio binding, the ModemManager rule, nothing opened
 ```
 
 `tests/dryrun.py` is a **diagnostic harness, not an assertion suite** — it prints
@@ -201,6 +225,51 @@ them with `xvfb-run -a`.
 Neither covers runtime behavior — real `apt`, real downloads, real extraction.
 A VM run is required before any deployment, and the hardware claims need the
 actual dock.
+
+### Test the step, not its source
+
+A test that greps the provisioner's source for a string proves the string is
+there. It does not prove the step does anything. That is this project's failure
+mode one level down: a check that passes for work that did not happen, with the
+test as the thing reporting success.
+
+It has gone wrong here in two ways:
+
+- **The substring also appears somewhere else.** `shutil.which("direwolf")` and
+  `proc.stdout` each appear more than once in the provisioner. A whole-file
+  assertion kept passing after the Direwolf step's own copies were deleted,
+  and only mutating those lines revealed it. A narrower slice can fall into the
+  same trap: inside the Direwolf verification block, a bare `read_text` also
+  matches the read of `direwolf.conf`.
+- **The sentence never appears assembled.** A log message split across adjacent
+  string literals is never in the source as one string. An assertion for the
+  full sentence fails against correct code, and the easy "fix" is to loosen it
+  until it matches something.
+
+Three rules follow:
+
+1. **Prefer driving the step.** Run the real function against a fixture: a
+   temporary `HOME`, a `configs/` built for the case, and a context whose `sudo`
+   and `sudo_write` record what they were given instead of running it. Then
+   assert on what was written and what was logged. `DryCtx` in
+   `tests/dryrun.py` already does this. That catches what a source assertion
+   cannot: a rule written malformed, a branch that never runs, a message that
+   never prints. If a test pulls functions out by `exec` instead of importing
+   the module, it has to supply every name they reference (`Ctx`, `os`,
+   `shutil`). A missing name fails the test, not the code.
+2. **When a source assertion is the right tool, scope it and match it
+   exactly.** Some claims are proofs of absence that no run can give, for
+   example "nothing in this path opens the device". Those belong in source.
+   Slice to the function's own region. Match the exact expression
+   (`Path(RADIO_MM_RULE).read_text`, not `read_text`). Match only text that is
+   contiguous in the file.
+3. **Mutate every new assertion before trusting it.** Break the line the
+   assertion guards, confirm the suite fails, then restore the line. An
+   assertion that survives a mutation of its own subject is decoration.
+
+`tests/radio.py` is still mostly source assertions. Converting it to drive
+`optional_direwolf` against fixtures, the way `tests/dryrun.py` drives every
+step, is outstanding.
 
 ---
 
@@ -267,7 +336,7 @@ Categorize by what the change does:
 | Breaks an already-provisioned node or an existing config | MAJOR — `2.0.0` |
 
 Clearing the pre-release flag is not itself a version event. It changes how the
-release is labelled, not what the scripts do, so the number moves only if a script
+release is labeled, not what the scripts do, so the number moves only if a script
 moved with it.
 
 This replaces an earlier rule under which `v1.0.0` covered the entire pre-release
@@ -335,23 +404,51 @@ last moment the mistake is still cheap.
 
 ---
 
-## Relationship to the S.T.N.D. repository
+## Where this code came from
 
-This provisioner began as a public/EM adaptation of a separate private repository
-and shares **no code** with it. Fixes have been ported by hand in one direction
-(the five-screen flow, post-deployment verification, the hostname step, the
-`os.getlogin()` crash). They do not flow automatically and the two will drift.
+This provisioner began as an emergency-communications adaptation of a separate
+private repository and shares **no code** with it. Fixes have been ported by hand
+in one direction (the five-screen flow, post-deployment verification, the hostname
+step, the `os.getlogin()` crash). They do not flow automatically and the two will
+drift.
 
 If you are told a fix exists "in the other repo", it is not in this one until
-someone ports it. There are no distribution branches here — unlike the sibling
-repository, `main` is the only branch and the clone is what people run.
+someone ports it. There are no distribution branches here: `main` is the only
+branch and the clone is what people run.
+
+**Name neither that repository nor its project, anywhere in this one.** Not in
+code comments, not in documentation, not in issue or commit text. The two are
+developed in parallel because the workflows are alike; that is the whole of the
+relationship, and this repository is going public while the other is not. Where a
+fact was established on the other project's hardware and the provenance matters,
+state it abstractly — "on a separate node running the hand-ported equivalent of
+this step" — and never link to an issue or a branch that a reader cannot open.
 
 ---
 
 ## License
 
-GPL-3.0-or-later. `LICENSE` is the FSF text verbatim; the provisioner and the tile
-fetcher each carry the per-file notice the GPL asks for. The grant covers this
+GPL-3.0-or-later, with two files under MIT. `LICENSE` is the FSF text verbatim
+and `LICENSE-MIT` the MIT text. Each shipped script carries its own notice: the
+GPL notice in the provisioner, the MIT notice (with the full permission text, so
+a copy lifted out on its own still carries its license) in
+`scripts/fetch_map_tiles.py` and `scripts/diagnose_qmapshack_maps.py`.
+`tests/maps.py` checks the diagnostic's.
+
+The split exists so that the owner can grant separate terms to an organization
+whose policy bars GPL-3.0 — "Alternative licensing" in `README.md`. That depends
+on the owner being able to license every line of the project, and two things
+would quietly end it:
+
+* **A contribution taken only under the GPL.** `CONTRIBUTING.md` states that
+  contributions are accepted under MIT. Keep that line.
+* **Code copied in from another GPL-licensed project.** Not into the provisioner,
+  and not into an MIT file, where it would also make the header false.
+
+Requests for separate terms arrive as GitHub issues. Granting them is the owner's
+decision; do not answer one on the owner's behalf.
+
+The grant covers this
 repository's own code, configuration templates and documentation — **not**
 third-party material a deployment pulls in or that is later committed here.
 Reference manuals, map tiles, ZIM archives, `.deb` packages and radio codeplugs
