@@ -362,7 +362,28 @@ drops and needs ~10 seconds to resume. Anything that opens and closes the port
 costs the node ten seconds of time source — which is why the verification row
 asks chronyd rather than opening the device.
 
-## 15. Hardware
+## 15. Operator's Manual
+Optional. The node can serve its own manual, and a node that needs the manual is
+usually a node with no network to fetch it over. No PDF ships, in the tarball or on
+a release: the markdown source is in `docs/`, and you build the PDF from it. It has
+to happen *before* the run — the document server step copies the PDFs in `docs/` at
+that moment and does not come back for more.
+
+From the provisioner's directory:
+
+    sudo apt install python3-reportlab       # once
+    python3 scripts/build_manual.py
+
+That writes `docs/EmComm-Operators-Manual.pdf`. If you built it, confirm it landed
+after provisioning:
+
+    ls ~/EMCOMM_Data/PDF_Manuals/
+
+and that it is reachable at `http://127.0.0.1:8085` with the network pulled. A run
+with no PDF in `docs/` warns rather than failing, so an absent manual is easy to
+miss until the node is somewhere you cannot fix it.
+
+## 16. Hardware
 A recommended and tested hardware list ships with the release, covering
 everything except radios. Two things about it:
 
